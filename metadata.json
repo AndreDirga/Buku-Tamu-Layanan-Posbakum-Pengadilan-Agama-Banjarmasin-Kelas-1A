@@ -1,0 +1,7 @@
+{
+  "name": "Buku Tamu Layanan Posbakum Pengadilan Agama Banjarmasin Kelas 1A",
+  "description": "Sistem Informasi Buku Tamu Digital Layanan Posbakum Pengadilan Agama Banjarmasin Kelas 1A untuk Pengunjung dan Petugas.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
