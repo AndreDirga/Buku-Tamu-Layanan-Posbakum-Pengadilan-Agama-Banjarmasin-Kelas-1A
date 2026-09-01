@@ -19,12 +19,6 @@ const STORAGE_KEY_LOGS = 'pabjm_posbakum_logs_v1';
 const STORAGE_KEY_QR = 'pabjm_posbakum_qr_v2';
 const STORAGE_KEY_AUTH = 'pabjm_posbakum_auth_v2';
 
-// Sample signature SVG converted to data URL for sample data
-const SAMPLE_SIGNATURE_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M 30 90 Q 70 20 110 80 T 170 60 Q 210 120 270 70" fill="none" stroke="%231e293b" stroke-width="3" stroke-linecap="round"/><path d="M 90 110 L 220 110" fill="none" stroke="%231e293b" stroke-width="2" stroke-linecap="round"/></svg>`;
-
-const SAMPLE_SELFIE_SVG = (initials: string, bg: string = '%23059669') => 
-  `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="${bg}"/><circle cx="100" cy="75" r="40" fill="%23ffffff" opacity="0.9"/><path d="M 35 175 C 35 130, 165 130, 165 175 Z" fill="%23ffffff" opacity="0.9"/><text x="100" y="85" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="${bg}" text-anchor="middle">${initials}</text></svg>`;
-
 export const INITIAL_OFFICER: OfficerUser = {
   id: 'usr-001',
   name: 'Admin',
@@ -42,133 +36,23 @@ export const INITIAL_QR_TOKENS: QrToken[] = [
     token: 'POSBAKUM-MEJA-1',
     isActive: true,
     createdAt: '2026-08-01 08:00:00',
-    scanCount: 245,
+    scanCount: 0,
   },
 ];
 
-export const INITIAL_VISITS: Visit[] = [
-  {
-    id: 'vst-001',
-    visitNumber: 'KJG-20260831-0001',
-    visitedAt: '2026-08-31T08:35:00',
-    dateDisplay: '31 Agustus 2026',
-    timeDisplay: '08:35 WITA',
-    name: 'Ahmad Fauzi Rahman',
-    ktpAddress: 'Jl. Ahmad Yani Km. 4,5 No. 12, Kel. Kebun Bunga, Kec. Banjarmasin Timur',
-    domicileAddress: 'Jl. Ahmad Yani Km. 4,5 No. 12, Kel. Kebun Bunga, Kec. Banjarmasin Timur',
-    domicileSameAsKtp: true,
-    email: 'ahmad.fauzi@gmail.com',
-    whatsapp: '081250123456',
-    occupation: 'Wiraswasta',
-    caseCategory: 'A. Perkara Perkawinan & Perceraian',
-    caseType: 'Cerai Gugat',
-    selfieUrl: SAMPLE_SELFIE_SVG('AF', '%230284c7'),
-    selfieFileName: 'KJG-20260831-0001-selfie.jpg',
-    signatureUrl: SAMPLE_SIGNATURE_SVG,
-    signatureFileName: 'KJG-20260831-0001-signature.png',
-    deskLocation: 'Ruang Posbakum Meja 01',
-    officerName: 'Admin',
-    status: 'Selesai',
-    notes: 'Konsultasi draf surat gugatan cerai dan lampiran bukti.',
-    createdAt: '2026-08-31T08:35:00',
-  },
-  {
-    id: 'vst-002',
-    visitNumber: 'KJG-20260831-0002',
-    visitedAt: '2026-08-31T09:15:00',
-    dateDisplay: '31 Agustus 2026',
-    timeDisplay: '09:15 WITA',
-    name: 'Siti Nurhaliza binti Mansyur',
-    ktpAddress: 'Jl. Belitung Darat Gg. Simpang Belina No. 8, Banjarmasin Barat',
-    domicileAddress: 'Jl. Pangeran Hidayatullah Komplek Timur Perdana No. 14, Banjarmasin Utara',
-    domicileSameAsKtp: false,
-    email: 'siti.nurhaliza.bjm@yahoo.com',
-    whatsapp: '085751998877',
-    occupation: 'Ibu Rumah Tangga',
-    caseCategory: 'A. Perkara Perkawinan & Perceraian',
-    caseType: 'Gugatan Itsbat Nikah (GIN)',
-    selfieUrl: SAMPLE_SELFIE_SVG('SN', '%23059669'),
-    selfieFileName: 'KJG-20260831-0002-selfie.jpg',
-    signatureUrl: SAMPLE_SIGNATURE_SVG,
-    signatureFileName: 'KJG-20260831-0002-signature.png',
-    deskLocation: 'Ruang Posbakum Meja 01',
-    officerName: 'Admin',
-    status: 'Sedang Dilayani',
-    notes: 'Permohonan pengesahan nikah sirri tahun 2018.',
-    createdAt: '2026-08-31T09:15:00',
-  },
-  {
-    id: 'vst-003',
-    visitNumber: 'KJG-20260831-0003',
-    visitedAt: '2026-08-31T10:10:00',
-    dateDisplay: '31 Agustus 2026',
-    timeDisplay: '10:10 WITA',
-    name: 'M. Ruslan Effendi',
-    ktpAddress: 'Jl. Sultan Adam Komplek Taekwondo Permai Jalur 3 No. 45, Banjarmasin Utara',
-    domicileAddress: 'Jl. Sultan Adam Komplek Taekwondo Permai Jalur 3 No. 45, Banjarmasin Utara',
-    domicileSameAsKtp: true,
-    email: 'ruslan.effendi99@gmail.com',
-    whatsapp: '081348002233',
-    occupation: 'PNS',
-    caseCategory: 'C. Perkara Waris & Harta',
-    caseType: 'Penetapan Ahli Waris',
-    selfieUrl: SAMPLE_SELFIE_SVG('RE', '%237c3aed'),
-    selfieFileName: 'KJG-20260831-0003-selfie.jpg',
-    signatureUrl: SAMPLE_SIGNATURE_SVG,
-    signatureFileName: 'KJG-20260831-0003-signature.png',
-    deskLocation: 'Ruang Posbakum Meja 01',
-    officerName: 'Admin',
-    status: 'Menunggu',
-    createdAt: '2026-08-31T10:10:00',
-  },
-  {
-    id: 'vst-004',
-    visitNumber: 'KJG-20260830-0012',
-    visitedAt: '2026-08-30T11:20:00',
-    dateDisplay: '30 Agustus 2026',
-    timeDisplay: '11:20 WITA',
-    name: 'Rahmawati Putri',
-    ktpAddress: 'Jl. Veteran Gg. 5 No. 20, Kel. Sungai Bilu, Kec. Banjarmasin Timur',
-    domicileAddress: 'Jl. Veteran Gg. 5 No. 20, Kel. Sungai Bilu, Kec. Banjarmasin Timur',
-    domicileSameAsKtp: true,
-    email: 'rahma.putri@gmail.com',
-    whatsapp: '082155443322',
-    occupation: 'Pegawai Swasta',
-    caseCategory: 'B. Perkara Anak & Perwalian',
-    caseType: 'Hak Asuh Anak',
-    selfieUrl: SAMPLE_SELFIE_SVG('RP', '%23db2777'),
-    selfieFileName: 'KJG-20260830-0012-selfie.jpg',
-    signatureUrl: SAMPLE_SIGNATURE_SVG,
-    signatureFileName: 'KJG-20260830-0012-signature.png',
-    deskLocation: 'Ruang Posbakum Meja 01',
-    status: 'Selesai',
-    notes: 'Konsultasi hadhanah pasca putusan perceraian.',
-    createdAt: '2026-08-30T11:20:00',
-  }
-];
+export const INITIAL_VISITS: Visit[] = [];
 
 const INITIAL_LOGS: ActivityLog[] = [
   {
     id: 'log-001',
-    timestamp: '2026-08-31 08:30:15',
+    timestamp: '2026-08-31 08:00:00',
     userId: 'usr-001',
     userName: 'Admin',
     userRole: 'Petugas Posbakum',
     action: 'LOGIN',
-    description: 'Petugas berhasil login ke Portal Posbakum',
+    description: 'Sistem Buku Tamu Posbakum siap digunakan',
     ipAddress: '192.168.10.45',
     badgeColor: 'emerald',
-  },
-  {
-    id: 'log-002',
-    timestamp: '2026-08-31 08:35:10',
-    userId: 'system',
-    userName: 'Sistem Publik',
-    userRole: 'Pengunjung',
-    action: 'TAMBAH_KUNJUNGAN',
-    description: 'Pengunjung mengisi buku tamu: KJG-20260831-0001 (Ahmad Fauzi Rahman)',
-    ipAddress: '180.252.88.14',
-    badgeColor: 'blue',
   }
 ];
 
@@ -195,9 +79,19 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        if (snapshot.empty) {
+          localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
+          callback([]);
+          return;
+        }
+
         const list: Visit[] = [];
         snapshot.forEach((docSnap) => {
-          list.push(docSnap.data() as Visit);
+          const data = docSnap.data() as Visit;
+          list.push({
+            ...data,
+            id: data.id || docSnap.id,
+          });
         });
         // Update local cache
         localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(list));
@@ -334,16 +228,31 @@ export const updateVisitStatus = async (
 export const deleteVisit = async (visitId: string, deletedByName?: string): Promise<boolean> => {
   const visits = getStoredVisits();
   const target = visits.find((v) => v.id === visitId);
-  if (!target) return false;
 
-  // Local cache update
+  // 1. Local cache update immediately
   const updated = visits.filter((v) => v.id !== visitId);
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
 
-  // Cloud Firestore permanent deletion
+  // 2. Cloud Firestore permanent deletion
   try {
     const docRef = doc(db, 'visits', visitId);
     await deleteDoc(docRef);
+
+    // Also scan in case doc ID differs from field id
+    const visitsCol = collection(db, 'visits');
+    const snapshot = await getDocs(visitsCol);
+    const batch = writeBatch(db);
+    let matchedCount = 0;
+    snapshot.forEach((d) => {
+      const data = d.data();
+      if (d.id === visitId || data.id === visitId || (target?.visitNumber && data.visitNumber === target.visitNumber)) {
+        batch.delete(d.ref);
+        matchedCount++;
+      }
+    });
+    if (matchedCount > 0) {
+      await batch.commit();
+    }
   } catch (err) {
     console.error('Failed to delete visit in Firestore:', err);
   }
@@ -353,7 +262,9 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
     userName: deletedByName || 'Admin',
     userRole: 'Petugas Posbakum',
     action: 'HAPUS_KUNJUNGAN',
-    description: `Menghapus data kunjungan: ${target.visitNumber} (${target.name} - ${target.caseType})`,
+    description: target 
+      ? `Menghapus data kunjungan: ${target.visitNumber} (${target.name} - ${target.caseType})`
+      : `Menghapus data kunjungan ID: ${visitId}`,
     badgeColor: 'red',
   });
 
@@ -365,33 +276,45 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
   const visits = getStoredVisits();
   const countBefore = visits.length;
   const updated = visits.filter((v) => !visitIds.includes(v.id));
-  const deletedCount = countBefore - updated.length;
+  const deletedCount = countBefore - updated.length || visitIds.length;
 
-  if (deletedCount > 0) {
-    // Local cache update
-    localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  // Local cache update
+  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
 
-    // Cloud Firestore batch delete
-    try {
-      const batch = writeBatch(db);
-      visitIds.forEach((id) => {
-        const docRef = doc(db, 'visits', id);
-        batch.delete(docRef);
-      });
+  // Cloud Firestore batch delete
+  try {
+    const visitsCol = collection(db, 'visits');
+    const snapshot = await getDocs(visitsCol);
+    const batch = writeBatch(db);
+    let matched = 0;
+    snapshot.forEach((d) => {
+      const data = d.data();
+      if (visitIds.includes(d.id) || (data && visitIds.includes(data.id))) {
+        batch.delete(d.ref);
+        matched++;
+      }
+    });
+    if (matched > 0) {
       await batch.commit();
-    } catch (err) {
-      console.error('Failed to batch delete visits in Firestore:', err);
     }
 
-    logActivity({
-      userId: 'officer-admin',
-      userName: deletedByName || 'Admin',
-      userRole: 'Petugas Posbakum',
-      action: 'HAPUS_KUNJUNGAN',
-      description: `Menghapus ${deletedCount} riwayat kunjungan secara massal`,
-      badgeColor: 'red',
-    });
+    // Direct deletion fallback
+    for (const id of visitIds) {
+      const docRef = doc(db, 'visits', id);
+      await deleteDoc(docRef).catch(() => {});
+    }
+  } catch (err) {
+    console.error('Failed to batch delete visits in Firestore:', err);
   }
+
+  logActivity({
+    userId: 'officer-admin',
+    userName: deletedByName || 'Admin',
+    userRole: 'Petugas Posbakum',
+    action: 'HAPUS_KUNJUNGAN',
+    description: `Menghapus ${deletedCount} riwayat kunjungan secara massal`,
+    badgeColor: 'red',
+  });
 
   return deletedCount;
 };
@@ -401,20 +324,33 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
   const visits = getStoredVisits();
   const totalCount = visits.length;
 
-  // Clear local storage
+  // 1. Clear local storage
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
 
-  // Batch delete all in Cloud Firestore
+  // 2. Batch delete all in Cloud Firestore
   try {
     const visitsCol = collection(db, 'visits');
     const snapshot = await getDocs(visitsCol);
-    const batch = writeBatch(db);
-    snapshot.forEach((docSnap) => {
-      batch.delete(docSnap.ref);
-    });
-    await batch.commit();
+    if (!snapshot.empty) {
+      const batch = writeBatch(db);
+      snapshot.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      await batch.commit();
+    }
   } catch (err) {
     console.error('Failed to clear all visits in Firestore:', err);
+  }
+
+  // 3. Clean up any visit-related activity logs from local storage
+  try {
+    const logs = getStoredLogs();
+    const cleanedLogs = logs.filter(
+      (l) => l.action !== 'TAMBAH_KUNJUNGAN' && !l.description.includes('mengisi buku tamu')
+    );
+    localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(cleanedLogs));
+  } catch (e) {
+    console.warn('Could not clean old visit logs', e);
   }
 
   logActivity({
@@ -422,7 +358,7 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
     userName: deletedByName || 'Admin',
     userRole: 'Petugas Posbakum',
     action: 'RESET_STATISTIK_KUNJUNGAN',
-    description: `Mereset total kunjungan dan seluruh statistik (menghapus ${totalCount} data)`,
+    description: `Mereset total kunjungan dan seluruh statistik (dikosongkan total)`,
     badgeColor: 'red',
   });
 
