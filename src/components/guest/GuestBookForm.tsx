@@ -213,8 +213,8 @@ export const GuestBookForm: React.FC<GuestBookFormProps> = ({
             <CourtEmblem size="lg" showText={false} className="justify-center" />
             
             <div>
-              <div className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-900 text-[10px] font-extrabold uppercase tracking-wider border border-emerald-200 mb-0.5">
-                PENGADILAN AGAMA BANJARMASIN KELAS 1A
+              <div className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-900 text-[10px] font-extrabold uppercase tracking-wider border border-emerald-200 mb-1">
+                POS BANTUAN HUKUM (POSBAKUM)
               </div>
               <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
                 BUKU TAMU LAYANAN POSBAKUM

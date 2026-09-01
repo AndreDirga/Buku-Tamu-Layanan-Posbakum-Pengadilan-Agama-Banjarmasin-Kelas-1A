@@ -178,11 +178,11 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
             {/* Emblem and Court Header */}
             <div className="flex flex-col items-center pt-1">
               <CourtEmblem size="lg" showText={false} className="justify-center text-center" />
-              <div className="mt-1.5 text-[10px] font-extrabold tracking-wider uppercase text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-200">
-                BUKU TAMU DIGITAL POSBAKUM
+              <div className="mt-1.5 text-[10px] font-extrabold tracking-wider uppercase text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                BUKU TAMU DIGITAL
               </div>
               <h3 className="text-base font-black text-slate-900 mt-1">
-                PENGADILAN AGAMA BANJARMASIN KELAS 1A
+                POS BANTUAN HUKUM (POSBAKUM)
               </h3>
               <p className="text-[11px] text-slate-500 font-medium">
                 {useOfficialQr 

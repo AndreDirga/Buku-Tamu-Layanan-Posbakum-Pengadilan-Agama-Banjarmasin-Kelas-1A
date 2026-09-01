@@ -33,20 +33,14 @@ export const RoleSelectionPortal: React.FC<RoleSelectionPortalProps> = ({
             <CourtEmblem size="xl" showText={false} className="justify-center" />
             
             <div className="pt-1">
-              <div className="text-[10px] sm:text-[11px] font-bold tracking-widest text-emerald-800 uppercase mb-0.5">
-                MAHKAMAH AGUNG REPUBLIK INDONESIA
-              </div>
-              <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
-                PENGADILAN AGAMA BANJARMASIN KELAS 1A
-              </h2>
-              <div className="inline-block px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-900 text-[10px] font-extrabold uppercase tracking-wider border border-emerald-200 my-1">
+              <div className="inline-block px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-extrabold uppercase tracking-wider border border-emerald-200 mb-1">
                 POS BANTUAN HUKUM (POSBAKUM)
               </div>
-              <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                 SISTEM BUKU TAMU DIGITAL
               </h1>
-              <p className="text-[11px] text-slate-500 max-w-md mx-auto mt-0.5">
-                Silakan pilih peran Anda untuk melanjutkan ke layanan sistem buku tamu & pendaftaran perkara.
+              <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                Silakan pilih peran Anda untuk melanjutkan ke layanan pendaftaran buku tamu atau pengelolaan Posbakum.
               </p>
             </div>
 
@@ -188,10 +182,10 @@ export const RoleSelectionPortal: React.FC<RoleSelectionPortalProps> = ({
       {/* Footer */}
       <footer className="max-w-3xl w-full mx-auto border-t border-slate-200 pt-4 mt-6 text-center text-[11px] text-slate-500 space-y-0.5">
         <div className="font-bold text-slate-700">
-          PENGADILAN AGAMA BANJARMASIN KELAS 1A
+          POS BANTUAN HUKUM (POSBAKUM)
         </div>
         <div className="text-[10px] text-slate-400">
-          Jl. Gatot Subroto No. 8, Banjarmasin 70235, Kalimantan Selatan
+          Layanan Bantuan Hukum & Konsultasi Posbakum
         </div>
       </footer>
     </div>

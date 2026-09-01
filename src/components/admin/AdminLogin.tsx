@@ -86,11 +86,11 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
           <div className="flex flex-col items-center text-center space-y-1.5 pb-2 border-b border-slate-100">
             <CourtEmblem size="lg" showText={false} className="justify-center" />
             <div>
-              <div className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block mb-0.5">
+              <div className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 inline-block mb-1">
                 Portal Petugas Posbakum
               </div>
               <h2 className="text-base font-black text-slate-900 tracking-tight">
-                PA BANJARMASIN KELAS 1A
+                POS BANTUAN HUKUM (POSBAKUM)
               </h2>
               <p className="text-[11px] text-slate-500">
                 Masuk untuk mengelola data kunjungan & laporan Posbakum

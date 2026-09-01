@@ -8,272 +8,258 @@ interface CourtEmblemProps {
 }
 
 /**
- * Official Pengadilan Agama Banjarmasin Oval Emblem Logo
+ * Official Posbakum Pengadilan Agama Banjarmasin Circular Logo Icon
+ * (profesional - adil - terpercaya)
  */
 export const PaBjmLogoIcon: React.FC<{ className?: string; sizeClass?: string }> = ({
   className = '',
-  sizeClass = 'w-12 h-14',
+  sizeClass = 'w-12 h-12',
 }) => {
   return (
     <div className={`relative flex-shrink-0 flex items-center justify-center ${sizeClass} ${className}`}>
       <svg
-        viewBox="0 0 450 520"
+        viewBox="0 0 500 500"
         className="w-full h-full drop-shadow-md select-none"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          {/* Curve path for curved text around upper and sides of the oval */}
+          {/* Top text arc: POSBAKUM PENGADILAN AGAMA BANJARMASIN */}
           <path
-            id="pabjm-text-arc"
-            d="M 68,340 A 165,195 0 1,1 382,340"
+            id="posbakum-top-arc"
+            d="M 62,250 A 188,188 0 1,1 438,250"
             fill="none"
           />
+          {/* Bottom text arc: profesional - adil - terpercaya */}
+          <path
+            id="posbakum-bottom-arc"
+            d="M 92,300 A 180,180 0 0,0 408,300"
+            fill="none"
+          />
+
           {/* Gradients */}
-          <linearGradient id="pabjm-gold-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#FFF176" />
-            <stop offset="50%" stopColor="#FBC02D" />
-            <stop offset="100%" stopColor="#F57F17" />
+          <linearGradient id="posbakum-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#15803D" />
+            <stop offset="35%" stopColor="#22C55E" />
+            <stop offset="65%" stopColor="#EAB308" />
+            <stop offset="100%" stopColor="#CA8A04" />
           </linearGradient>
-          <linearGradient id="pabjm-green-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#00A651" />
-            <stop offset="100%" stopColor="#00843D" />
+
+          <linearGradient id="posbakum-green-swoosh" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#14532D" />
+            <stop offset="50%" stopColor="#15803D" />
+            <stop offset="100%" stopColor="#22C55E" />
           </linearGradient>
-          <filter id="pabjm-shadow" x="-10%" y="-10%" width="120%" height="120%">
-            <feDropShadow dx="0" dy="2" stdDeviation="2" floodOpacity="0.3" />
+
+          <linearGradient id="posbakum-gold-swoosh" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FEF08A" />
+            <stop offset="50%" stopColor="#EAB308" />
+            <stop offset="100%" stopColor="#CA8A04" />
+          </linearGradient>
+
+          <linearGradient id="posbakum-gold-light" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FEF08A" />
+            <stop offset="100%" stopColor="#FACC15" />
+          </linearGradient>
+
+          <filter id="posbakum-shadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
           </filter>
         </defs>
 
-        {/* 1. Main Green Oval Canvas */}
-        <ellipse
-          cx="225"
-          cy="260"
-          rx="210"
-          ry="248"
-          fill="url(#pabjm-green-grad)"
-          stroke="#FACC15"
-          strokeWidth="9"
-        />
+        {/* 1. Base White Disc Canvas */}
+        <circle cx="250" cy="250" r="240" fill="#FFFFFF" />
 
-        {/* 2. Inner Golden Border Guide */}
-        <ellipse
-          cx="225"
-          cy="260"
-          rx="184"
-          ry="220"
+        {/* 2. Outer Gradient Circular Ring */}
+        <circle
+          cx="250"
+          cy="250"
+          r="236"
           fill="none"
-          stroke="#FDE047"
-          strokeWidth="3.5"
+          stroke="url(#posbakum-ring-grad)"
+          strokeWidth="9.5"
         />
 
-        {/* 3. Arching Text: PENGADILAN AGAMA BANJARMASIN */}
+        {/* 3. Top Arching Text: POSBAKUM PENGADILAN AGAMA BANJARMASIN */}
         <text
-          fill="#FFF952"
-          stroke="#713F12"
-          strokeWidth="1.2"
-          fontSize="27"
+          fill="#0F2815"
+          fontSize="24"
           fontWeight="900"
-          fontFamily="system-ui, -apple-system, sans-serif"
-          letterSpacing="4.5"
-          filter="url(#pabjm-shadow)"
+          fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+          letterSpacing="2.2"
         >
           <textPath
-            href="#pabjm-text-arc"
+            href="#posbakum-top-arc"
             startOffset="50%"
             textAnchor="middle"
           >
-            PENGADILAN AGAMA BANJARMASIN
+            POSBAKUM PENGADILAN AGAMA BANJARMASIN
           </textPath>
         </text>
 
-        {/* 4. Golden 8-Pointed Starburst / Cakra Surya Motif */}
-        <g transform="translate(225, 230)">
-          {/* Flame Petals / Sunburst rays */}
-          {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
-            <g key={i} transform={`rotate(${angle})`}>
-              <path
-                d="M 0,-85 C -25,-60 -18,-45 -48,-48 C -30,-25 -38,-10 0,0 C 38,-10 30,-25 48,-48 C 18,-45 25,-60 0,-85 Z"
-                fill="url(#pabjm-gold-grad)"
-                stroke="#CA8A04"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M 0,-78 C -14,-56 -10,-40 -35,-42 C -20,-20 -25,-8 0,0"
-                fill="#FEF08A"
-                opacity="0.6"
-              />
-            </g>
-          ))}
-
-          {/* Sunburst Inner Golden Ring */}
-          <circle cx="0" cy="0" r="54" fill="#FEF08A" stroke="#CA8A04" strokeWidth="2.5" />
-          <circle cx="0" cy="0" r="48" fill="#15803D" stroke="#CA8A04" strokeWidth="2" />
-
-          {/* Central Pancasila Shield */}
-          {/* Quadrant 1: Top-Left (Red - Kepala Banteng) */}
-          <path
-            d="M 0,0 L -46,0 A 46,46 0 0,1 0,-46 Z"
-            fill="#DC2626"
-          />
-          {/* Quadrant 2: Top-Right (White - Pohon Beringin) */}
-          <path
-            d="M 0,0 L 0,-46 A 46,46 0 0,1 46,0 Z"
-            fill="#FFFFFF"
-          />
-          {/* Quadrant 3: Bottom-Left (White - Padi & Kapas) */}
-          <path
-            d="M 0,0 L -46,0 A 46,46 0 0,0 0,46 Z"
-            fill="#FFFFFF"
-          />
-          {/* Quadrant 4: Bottom-Right (Red - Rantai) */}
-          <path
-            d="M 0,0 L 0,46 A 46,46 0 0,0 46,0 Z"
-            fill="#DC2626"
-          />
-
-          {/* Dividing cross line */}
-          <line x1="-46" y1="0" x2="46" y2="0" stroke="#1E293B" strokeWidth="2.5" />
-          <line x1="0" y1="-46" x2="0" y2="46" stroke="#1E293B" strokeWidth="2.5" />
-
-          {/* Top-Left: Banteng Head */}
-          <g transform="translate(-22, -22) scale(0.65)">
-            <path
-              d="M -16,-12 C -8,-18 0,-6 0,-2 C 0,-6 8,-18 16,-12 C 12,-4 8,4 8,10 C 8,16 0,20 0,20 C 0,20 -8,16 -8,10 C -8,4 -12,-4 -16,-12 Z"
-              fill="#0F172A"
-            />
-            {/* Horns */}
-            <path
-              d="M -16,-12 C -22,-24 -6,-22 -2,-10 M 16,-12 C 22,-24 6,-22 2,-10"
-              stroke="#0F172A"
-              strokeWidth="3"
-              fill="none"
-              strokeLinecap="round"
-            />
-          </g>
-
-          {/* Top-Right: Pohon Beringin */}
-          <g transform="translate(22, -22) scale(0.65)">
-            <path
-              d="M 0,18 L 0,2 M -4,18 L -2,4 M 4,18 L 2,4"
-              stroke="#451A03"
-              strokeWidth="2.5"
-            />
-            <circle cx="0" cy="-6" r="14" fill="#14532D" />
-            <circle cx="-9" cy="-2" r="9" fill="#166534" />
-            <circle cx="9" cy="-2" r="9" fill="#166534" />
-            <circle cx="0" cy="-14" r="8" fill="#15803D" />
-          </g>
-
-          {/* Bottom-Left: Padi dan Kapas */}
-          <g transform="translate(-22, 22) scale(0.6)">
-            {/* Rice branch (yellow) */}
-            <path d="M 4,-16 C -6,-10 -10,0 -8,16" stroke="#EAB308" strokeWidth="2" fill="none" />
-            <ellipse cx="-4" cy="-12" rx="3" ry="1.5" fill="#FACC15" transform="rotate(-30)" />
-            <ellipse cx="-8" cy="-5" rx="3" ry="1.5" fill="#FACC15" transform="rotate(-20)" />
-            <ellipse cx="-9" cy="4" rx="3" ry="1.5" fill="#FACC15" transform="rotate(-10)" />
-            {/* Cotton branch (white/green) */}
-            <path d="M -4,-16 C 6,-10 10,0 8,16" stroke="#16A34A" strokeWidth="2" fill="none" />
-            <circle cx="5" cy="-8" r="3" fill="#FFFFFF" stroke="#16A34A" strokeWidth="1" />
-            <circle cx="8" cy="1" r="3" fill="#FFFFFF" stroke="#16A34A" strokeWidth="1" />
-            <circle cx="6" cy="10" r="3" fill="#FFFFFF" stroke="#16A34A" strokeWidth="1" />
-          </g>
-
-          {/* Bottom-Right: Rantai Emas (Golden Chain) */}
-          <g transform="translate(22, 22) scale(0.6)">
-            <path
-              d="M -12,-8 C -4,-14 10,-12 14,-4 C 18,4 12,14 4,16 C -4,18 -14,10 -14,2"
-              stroke="#FACC15"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeDasharray="4 3"
-              fill="none"
-            />
-          </g>
-
-          {/* Central Black Pentagon Shield with Golden Star */}
-          <polygon
-            points="0,-18 16,-6 10,16 -10,16 -16,-6"
-            fill="#0F172A"
-            stroke="#FACC15"
-            strokeWidth="1.5"
-          />
-          {/* Star at center */}
-          <polygon
-            points="0,-12 3,-3 11,-3 5,2 7,10 0,6 -7,10 -5,2 -11,-3 -3,-3"
-            fill="#FACC15"
-          />
-        </g>
-
-        {/* 5. Golden Ribbon Banner: "DHARMMAYUKTI" */}
-        <g transform="translate(225, 375)">
-          {/* Ribbon tails */}
-          <path
-            d="M -105,10 L -120,28 L -90,24 Z M 105,10 L 120,28 L 90,24 Z"
-            fill="#CA8A04"
-          />
-          {/* Ribbon body */}
-          <path
-            d="M -100,-4 C -50,14 50,14 100,-4 L 92,22 C 46,36 -46,36 -92,22 Z"
-            fill="url(#pabjm-gold-grad)"
-            stroke="#A16207"
-            strokeWidth="1.5"
-            filter="url(#pabjm-shadow)"
-          />
-          <text
-            x="0"
-            y="17"
-            fill="#064E3B"
-            fontSize="14.5"
-            fontWeight="900"
-            fontFamily="Arial, sans-serif"
-            letterSpacing="2.5"
+        {/* 4. Bottom Arching Text: profesional - adil - terpercaya */}
+        <text
+          fill="#14532D"
+          fontSize="22"
+          fontWeight="800"
+          fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+          letterSpacing="1.8"
+        >
+          <textPath
+            href="#posbakum-bottom-arc"
+            startOffset="50%"
             textAnchor="middle"
           >
-            DHARMMAYUKTI
-          </text>
+            profesional - adil - terpercaya
+          </textPath>
+        </text>
+
+        {/* 5. Inner Decorative Wave Swooshes (Green & Gold) */}
+        {/* Left/Upper Green Swoosh */}
+        <path
+          d="M 135,260 C 130,165 210,120 295,115 C 235,128 175,170 170,250 C 166,310 200,345 240,360 C 180,345 138,315 135,260 Z"
+          fill="url(#posbakum-green-swoosh)"
+          opacity="0.95"
+        />
+
+        {/* Right/Upper Golden Swoosh */}
+        <path
+          d="M 210,140 C 290,120 370,165 375,255 C 370,185 315,145 245,138 C 230,137 218,138 210,140 Z"
+          fill="url(#posbakum-gold-swoosh)"
+          opacity="0.9"
+        />
+        <path
+          d="M 375,255 C 375,320 325,365 255,370 C 315,355 355,315 355,255 C 355,210 325,175 285,160 C 335,180 375,215 375,255 Z"
+          fill="url(#posbakum-green-swoosh)"
+          opacity="0.85"
+        />
+
+        {/* 6. Central Emblem: Timbangan Keadilan (Scales of Justice) */}
+        <g id="scales-of-justice" transform="translate(250, 242)">
+          {/* Main Central Pillar */}
+          <path
+            d="M -3.5, -60 L 3.5, -60 L 4.5, 45 L -4.5, 45 Z"
+            fill="#15803D"
+            stroke="#CA8A04"
+            strokeWidth="1.2"
+          />
+
+          {/* Central Top Finial / Spire */}
+          <circle cx="0" cy="-62" r="6" fill="url(#posbakum-gold-light)" stroke="#CA8A04" strokeWidth="1.5" />
+          <path d="M 0,-74 L 3,-64 L -3,-64 Z" fill="#CA8A04" />
+          <circle cx="0" cy="-62" r="3" fill="#15803D" />
+
+          {/* Horizontal Balance Beam (Curved Arch) */}
+          <path
+            d="M -75,-48 C -40,-60 40,-60 75,-48 C 76,-46 72,-43 65,-45 C 35,-54 -35,-54 -65,-45 C -72,-43 -76,-46 -75,-48 Z"
+            fill="url(#posbakum-gold-light)"
+            stroke="#CA8A04"
+            strokeWidth="1.2"
+          />
+          <path
+            d="M -75,-48 C -40,-58 40,-58 75,-48 L 72,-42 C 38,-51 -38,-51 -72,-42 Z"
+            fill="#15803D"
+          />
+
+          {/* Center Joint Ring */}
+          <circle cx="0" cy="-52" r="7.5" fill="url(#posbakum-gold-light)" stroke="#CA8A04" strokeWidth="1.5" />
+          <circle cx="0" cy="-52" r="3.5" fill="#15803D" />
+
+          {/* LEFT SCALE PAN */}
+          <g transform="translate(-62, -45)">
+            {/* 3 Suspension Cords */}
+            <line x1="0" y1="0" x2="-26" y2="46" stroke="#15803D" strokeWidth="1.8" />
+            <line x1="0" y1="0" x2="0" y2="47" stroke="#CA8A04" strokeWidth="1.5" />
+            <line x1="0" y1="0" x2="26" y2="46" stroke="#15803D" strokeWidth="1.8" />
+
+            {/* Left Pan Dish */}
+            <path
+              d="M -28,46 C -20,64 20,64 28,46 Z"
+              fill="#15803D"
+              stroke="#CA8A04"
+              strokeWidth="1.5"
+            />
+            {/* Pan Rim */}
+            <ellipse cx="0" cy="46" rx="28" ry="4.5" fill="url(#posbakum-gold-light)" stroke="#CA8A04" strokeWidth="1.2" />
+          </g>
+
+          {/* RIGHT SCALE PAN */}
+          <g transform="translate(62, -45)">
+            {/* 3 Suspension Cords */}
+            <line x1="0" y1="0" x2="-26" y2="46" stroke="#15803D" strokeWidth="1.8" />
+            <line x1="0" y1="0" x2="0" y2="47" stroke="#CA8A04" strokeWidth="1.5" />
+            <line x1="0" y1="0" x2="26" y2="46" stroke="#15803D" strokeWidth="1.8" />
+
+            {/* Right Pan Dish */}
+            <path
+              d="M -28,46 C -20,64 20,64 28,46 Z"
+              fill="#15803D"
+              stroke="#CA8A04"
+              strokeWidth="1.5"
+            />
+            {/* Pan Rim */}
+            <ellipse cx="0" cy="46" rx="28" ry="4.5" fill="url(#posbakum-gold-light)" stroke="#CA8A04" strokeWidth="1.2" />
+          </g>
         </g>
 
-        {/* 6. Golden Floral Wreath Garland (Under Banner) */}
-        <g transform="translate(225, 418)">
-          {/* Arching stem curve */}
+        {/* 7. Bottom Open Law Book (Kitab Terbuka) */}
+        <g id="open-law-book" transform="translate(250, 310)">
+          {/* Outer Cover Trim (Gold) */}
           <path
-            d="M -130,-30 C -120,45 120,45 130,-30"
-            stroke="#FDE047"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            fill="none"
+            d="M 0,28 C -35,16 -85,18 -92,34 L -92,44 C -85,28 -35,26 0,38 C 35,26 85,28 92,44 L 92,34 C 85,18 35,16 0,28 Z"
+            fill="url(#posbakum-gold-light)"
+            stroke="#CA8A04"
+            strokeWidth="1.2"
           />
-          
-          {/* Left Wreath Florets / Leaves */}
-          {[-120, -100, -80, -60, -40, -20].map((x, i) => {
-            const y = Math.sin((i / 5) * Math.PI) * 28;
-            return (
-              <g key={`l-${i}`} transform={`translate(${x}, ${y})`}>
-                <circle cx="0" cy="0" r="5.5" fill="#FEF08A" stroke="#CA8A04" strokeWidth="1.2" />
-                <circle cx="0" cy="-6" r="3.5" fill="#FACC15" />
-                <circle cx="-5" cy="3" r="3.5" fill="#FACC15" />
-                <circle cx="5" cy="3" r="3.5" fill="#FACC15" />
-              </g>
-            );
-          })}
 
-          {/* Right Wreath Florets / Leaves */}
-          {[20, 40, 60, 80, 100, 120].map((x, i) => {
-            const y = Math.sin(((5 - i) / 5) * Math.PI) * 28;
-            return (
-              <g key={`r-${i}`} transform={`translate(${x}, ${y})`}>
-                <circle cx="0" cy="0" r="5.5" fill="#FEF08A" stroke="#CA8A04" strokeWidth="1.2" />
-                <circle cx="0" cy="-6" r="3.5" fill="#FACC15" />
-                <circle cx="-5" cy="3" r="3.5" fill="#FACC15" />
-                <circle cx="5" cy="3" r="3.5" fill="#FACC15" />
-              </g>
-            );
-          })}
+          {/* Book Pages Layer (Deep Green & White Pages) */}
+          {/* Left Page Base */}
+          <path
+            d="M 0, -18 C -35,-32 -82,-30 -88,-16 L -88, 28 C -82,14 -35,12 0, 24 Z"
+            fill="#15803D"
+            stroke="#0F5132"
+            strokeWidth="1.5"
+          />
+          {/* Left Page Inner (White Sheet) */}
+          <path
+            d="M -3, -15 C -34,-27 -76,-25 -82,-12 L -82, 24 C -76,11 -34,9 -3, 20 Z"
+            fill="#FFFFFF"
+            stroke="#15803D"
+            strokeWidth="1"
+          />
+          {/* Left Page Lines */}
+          <path d="M -15,-8 C -35,-16 -65,-15 -74,-7" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
+          <path d="M -15,0 C -35,-8 -65,-7 -74,1" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
+          <path d="M -15,8 C -35,0 -65,1 -74,9" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
 
-          {/* Center Bow / Tie */}
-          <g transform="translate(0, 30)">
-            <ellipse cx="0" cy="0" rx="6" ry="5" fill="#FEF08A" stroke="#CA8A04" strokeWidth="1.5" />
-            <path d="M -5,4 C -12,12 -8,18 -4,15 M 5,4 C 12,12 8,18 4,15" stroke="#FDE047" strokeWidth="2.5" fill="none" />
-          </g>
+          {/* Right Page Base */}
+          <path
+            d="M 0, -18 C 35,-32 82,-30 88,-16 L 88, 28 C 82,14 35,12 0, 24 Z"
+            fill="#15803D"
+            stroke="#0F5132"
+            strokeWidth="1.5"
+          />
+          {/* Right Page Inner (White Sheet) */}
+          <path
+            d="M 3, -15 C 34,-27 76,-25 82,-12 L 82, 24 C 76,11 34,9 3, 20 Z"
+            fill="#FFFFFF"
+            stroke="#15803D"
+            strokeWidth="1"
+          />
+          {/* Right Page Lines */}
+          <path d="M 15,-8 C 35,-16 65,-15 74,-7" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
+          <path d="M 15,0 C 35,-8 65,-7 74,1" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
+          <path d="M 15,8 C 35,0 65,1 74,9" stroke="#15803D" strokeWidth="1.2" fill="none" opacity="0.6" />
+
+          {/* Center Spine Crease */}
+          <line x1="0" y1="-20" x2="0" y2="26" stroke="#CA8A04" strokeWidth="2.5" />
+
+          {/* Gold Bookmark Ribbon */}
+          <path
+            d="M -4,24 L -6,44 L 0,38 L 6,44 L 4,24 Z"
+            fill="url(#posbakum-gold-light)"
+            stroke="#CA8A04"
+            strokeWidth="1"
+          />
         </g>
       </svg>
     </div>
@@ -287,29 +273,26 @@ export const CourtEmblem: React.FC<CourtEmblemProps> = ({
   showText = true,
 }) => {
   const sizeClasses = {
-    sm: 'w-8 h-9.5',
-    md: 'w-11 h-13',
-    lg: 'w-16 h-19',
-    xl: 'w-20 h-24',
-    '2xl': 'w-28 h-33',
+    sm: 'w-8 h-8',
+    md: 'w-11 h-11',
+    lg: 'w-16 h-16',
+    xl: 'w-20 h-20',
+    '2xl': 'w-28 h-28',
   }[size];
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      {/* Official Court Logo */}
+      {/* Official Posbakum Circular Logo */}
       <PaBjmLogoIcon sizeClass={sizeClasses} />
 
       {showText && (
         <div className="text-left">
-          <div className="text-[10px] md:text-xs font-bold tracking-wider text-emerald-800 uppercase flex items-center gap-1">
-            <span>MAHKAMAH AGUNG REPUBLIK INDONESIA</span>
-          </div>
-          <h1 className="text-sm md:text-base font-extrabold text-slate-900 leading-tight">
-            PENGADILAN AGAMA BANJARMASIN KELAS 1A
+          <h1 className="text-sm md:text-base font-black text-slate-900 leading-tight">
+            POS BANTUAN HUKUM (POSBAKUM)
           </h1>
           {showSubtitle && (
             <p className="text-[11px] md:text-xs font-semibold text-emerald-700">
-              Pos Bantuan Hukum (POSBAKUM)
+              Sistem Buku Tamu Digital
             </p>
           )}
         </div>
@@ -317,4 +300,5 @@ export const CourtEmblem: React.FC<CourtEmblemProps> = ({
     </div>
   );
 };
+
 

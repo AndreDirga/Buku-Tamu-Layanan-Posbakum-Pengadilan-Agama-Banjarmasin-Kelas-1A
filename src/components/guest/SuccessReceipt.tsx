@@ -58,7 +58,7 @@ export const SuccessReceipt: React.FC<SuccessReceiptProps> = ({
               DATA BERHASIL DISIMPAN
             </h2>
             <p className="text-[11px] text-slate-500 max-w-xs">
-              Terima kasih telah mengisi Buku Tamu Posbakum Pengadilan Agama Banjarmasin.
+              Terima kasih telah mengisi Buku Tamu Pos Bantuan Hukum (POSBAKUM).
             </p>
           </div>
 

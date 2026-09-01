@@ -83,16 +83,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
 
             <div className="flex items-center gap-2.5">
-              <PaBjmLogoIcon sizeClass="w-8 h-9.5" />
+              <PaBjmLogoIcon sizeClass="w-8 h-8" />
               <div className="leading-tight">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                  Sistem Petugas Posbakum
+                  Portal Petugas
                 </div>
-                <div className="font-extrabold text-sm text-slate-100 hidden sm:block">
-                  Pengadilan Agama Banjarmasin Kelas 1A
-                </div>
-                <div className="font-bold text-xs text-slate-100 sm:hidden">
-                  PA Banjarmasin
+                <div className="font-extrabold text-sm text-slate-100">
+                  POS BANTUAN HUKUM (POSBAKUM)
                 </div>
               </div>
             </div>
