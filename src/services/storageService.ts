@@ -56,6 +56,22 @@ const INITIAL_LOGS: ActivityLog[] = [
   }
 ];
 
+// Helper to remove any undefined properties for safe Firestore storage
+export const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T => {
+  const clean: any = {};
+  Object.keys(obj).forEach((key) => {
+    const val = obj[key];
+    if (val !== undefined) {
+      if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+        clean[key] = sanitizeForFirestore(val);
+      } else {
+        clean[key] = val;
+      }
+    }
+  });
+  return clean;
+};
+
 // Helper to get local cache
 export const getStoredVisits = (): Visit[] => {
   try {
@@ -79,12 +95,6 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        if (snapshot.empty) {
-          localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
-          callback([]);
-          return;
-        }
-
         const list: Visit[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Visit;
@@ -93,6 +103,10 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
             id: data.id || docSnap.id,
           });
         });
+        
+        // Sort descending by visitedAt/createdAt
+        list.sort((a, b) => new Date(b.createdAt || b.visitedAt).getTime() - new Date(a.createdAt || a.visitedAt).getTime());
+
         // Update local cache
         localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(list));
         callback(list);
@@ -146,7 +160,7 @@ export const saveVisit = async (
 
   const visitRecord: Visit = {
     ...newVisitData,
-    id: `vst-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     visitNumber,
     visitedAt: now.toISOString(),
     dateDisplay,
@@ -158,13 +172,14 @@ export const saveVisit = async (
   };
 
   // 1. Update local cache immediately for zero latency
-  const updated = [visitRecord, ...visits];
+  const updated = [visitRecord, ...visits.filter(v => v.id !== visitRecord.id)];
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
 
-  // 2. Persist permanently to Cloud Firestore
+  // 2. Persist permanently to Cloud Firestore with sanitized payload
   try {
+    const cleanRecord = sanitizeForFirestore(visitRecord);
     const docRef = doc(db, 'visits', visitRecord.id);
-    await setDoc(docRef, visitRecord);
+    await setDoc(docRef, cleanRecord);
   } catch (err) {
     console.error('Error saving visit to Cloud Firestore:', err);
   }
@@ -172,7 +187,7 @@ export const saveVisit = async (
   // 3. Log activity permanently
   logActivity({
     action: 'TAMBAH_KUNJUNGAN',
-    description: `Buku tamu terdaftar permanen: ${visitNumber} (${visitRecord.name} - ${visitRecord.caseType})`,
+    description: `Buku tamu terdaftar: ${visitNumber} (${visitRecord.name} - ${visitRecord.caseType})`,
     userRole: 'Pengunjung',
     userName: 'Sistem Publik',
     userId: 'public-guest',
@@ -216,7 +231,8 @@ export const updateVisitStatus = async (
     if (notes !== undefined) payload.notes = notes;
     if (officerName) payload.officerName = officerName;
 
-    await updateDoc(docRef, payload);
+    const cleanPayload = sanitizeForFirestore(payload);
+    await updateDoc(docRef, cleanPayload);
   } catch (err) {
     console.error('Failed to update visit in Firestore:', err);
   }

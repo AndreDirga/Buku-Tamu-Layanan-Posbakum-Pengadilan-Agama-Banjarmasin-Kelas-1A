@@ -109,6 +109,14 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
   const stopDrawing = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
+    
+    // Auto-save signature so guest doesn't need to click extra button
+    const canvas = canvasRef.current;
+    if (canvas && hasStrokes) {
+      const pngDataUrl = canvas.toDataURL('image/png');
+      setIsSaved(true);
+      onSignatureSaved(pngDataUrl);
+    }
   };
 
   const handleClear = () => {

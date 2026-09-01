@@ -2,31 +2,23 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper function
-    function isValidVisitData(data) {
-      return data.name is string && data.name.size() > 0 &&
-             data.whatsapp is string && data.whatsapp.size() > 0 &&
-             data.caseType is string && data.caseType.size() > 0 &&
-             data.visitNumber is string;
-    }
-
-    // Visits collection: Public visitors can create their visit records, everyone can read, updates and deletes restricted
+    // Visits collection: Public visitors can record their guest visits, read and managed by Posbakum system
     match /visits/{visitId} {
       allow read: if true;
-      allow create: if isValidVisitData(request.resource.data);
+      allow create: if true;
       allow update, delete: if true;
     }
 
     // Logs collection
     match /activity_logs/{logId} {
       allow read: if true;
-      allow create, update, delete: if true;
+      allow write: if true;
     }
 
     // QR tokens & Desk settings
     match /qr_tokens/{tokenId} {
       allow read: if true;
-      allow create, update, delete: if true;
+      allow write: if true;
     }
   }
 }

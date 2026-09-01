@@ -27,9 +27,13 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
   onDataReset,
   officerName = 'Admin' 
 }) => {
+  const nowObj = new Date();
+  const currentMonthStr = String(nowObj.getMonth() + 1).padStart(2, '0');
+  const currentYearStr = String(nowObj.getFullYear());
+
   const [periodType, setPeriodType] = useState<'hari' | 'minggu' | 'bulan' | 'tahun'>('bulan');
-  const [selectedMonth, setSelectedMonth] = useState('08');
-  const [selectedYear, setSelectedYear] = useState('2026');
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+  const [selectedYear, setSelectedYear] = useState(currentYearStr);
   const [showResetModal, setShowResetModal] = useState(false);
 
   // Month names in Indonesian
