@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, CASE_CATEGORIES } from '../../types/posbakum';
-import { getStoredLogs, resetToDemoData, logActivity } from '../../services/storageService';
+import { getStoredLogs, clearAllVisits, logActivity } from '../../services/storageService';
 import { 
   Settings, 
   History, 
   ShieldCheck, 
   Database, 
   RefreshCcw, 
+  Trash2,
   Server, 
   CheckCircle2, 
   Scale, 
@@ -27,17 +28,9 @@ export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset })
     setLogs(getStoredLogs());
   }, []);
 
-  const handleResetData = () => {
-    if (window.confirm('Apakah Anda yakin ingin memulihkan data demo awal?')) {
-      resetToDemoData();
-      logActivity({
-        userId: 'admin',
-        userName: 'Administrator',
-        userRole: 'Administrator',
-        action: 'RESET_DATA',
-        description: 'Memulihkan basis data ke setelan demo awal',
-        badgeColor: 'amber',
-      });
+  const handleResetData = async () => {
+    if (window.confirm('Apakah Anda yakin ingin MENGHAPUS SEMUA data kunjungan & mereset statistik ke 0? Data akan dikosongkan secara total tanpa membuat data template/dummy.')) {
+      await clearAllVisits('Administrator');
       setLogs(getStoredLogs());
       setResetDone(true);
       onDataReset();
@@ -190,36 +183,36 @@ export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset })
         <div className="bg-white rounded-xl p-4 shadow-xs border border-slate-200 space-y-4">
           <div className="space-y-1">
             <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Pemeliharaan Basis Data & Data Demo</span>
+              <Database className="w-3.5 h-3.5 text-rose-700" />
+              <span>Pemeliharaan Basis Data & Reset Total</span>
             </h3>
             <p className="text-[11px] text-slate-500">
-              Gunakan tombol di bawah ini untuk memuat ulang data percontohan buku tamu resmi Posbakum PA Banjarmasin.
+              Gunakan tombol di bawah ini untuk menghapus seluruh data kunjungan dan mereset statistik ke 0 secara permanen.
             </p>
           </div>
 
-          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-3 bg-rose-50/50 rounded-xl border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <div className="font-bold text-xs text-slate-800">Muat Ulang / Reset Data Percontohan</div>
-              <div className="text-[10px] text-slate-500">
-                Memperbarui catatan kunjungan, nomor unik KJG, dan riwayat log.
+              <div className="font-bold text-xs text-rose-950">Kosongkan / Reset Seluruh Data Kunjungan</div>
+              <div className="text-[10px] text-slate-600">
+                Menghapus semua riwayat kunjungan dari Firestore & LocalStorage (Data = 0, tidak membuat template lagi).
               </div>
             </div>
 
             <button
               type="button"
               onClick={handleResetData}
-              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0"
+              className="px-3.5 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0 shadow-xs"
             >
               {resetDone ? (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Data Berhasil Dimuat!</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                  <span>Semua Data Telah Dihapus!</span>
                 </>
               ) : (
                 <>
-                  <RefreshCcw className="w-3.5 h-3.5" />
-                  <span>Reset ke Data Demo</span>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus Semua Data Kunjungan</span>
                 </>
               )}
             </button>

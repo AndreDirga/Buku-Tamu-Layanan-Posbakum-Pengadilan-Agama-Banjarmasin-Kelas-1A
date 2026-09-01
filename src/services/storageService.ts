@@ -177,13 +177,12 @@ export const getStoredVisits = (): Visit[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_VISITS);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(INITIAL_VISITS));
-      return INITIAL_VISITS;
+      return [];
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load visits from localStorage', err);
-    return INITIAL_VISITS;
+    return [];
   }
 };
 
@@ -196,24 +195,13 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Visit[] = [];
-          snapshot.forEach((docSnap) => {
-            list.push(docSnap.data() as Visit);
-          });
-          // Update local cache
-          localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(list));
-          callback(list);
-        } else {
-          // If Firestore is empty, seed initial data to Firestore
-          seedInitialVisitsToFirestore().then((seeded) => {
-            if (seeded.length > 0) {
-              callback(seeded);
-            } else {
-              callback(getStoredVisits());
-            }
-          });
-        }
+        const list: Visit[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as Visit);
+        });
+        // Update local cache
+        localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(list));
+        callback(list);
       },
       (error) => {
         console.warn('Firestore visits snapshot warning/fallback to cache:', error);
@@ -226,26 +214,6 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     console.error('Error setting up visits subscription:', err);
     callback(getStoredVisits());
     return () => {};
-  }
-};
-
-// Seed initial visits to Firestore if collection is empty
-const seedInitialVisitsToFirestore = async (): Promise<Visit[]> => {
-  try {
-    const cached = getStoredVisits();
-    const toSeed = cached.length > 0 ? cached : INITIAL_VISITS;
-    const batch = writeBatch(db);
-    
-    toSeed.forEach((v) => {
-      const docRef = doc(db, 'visits', v.id);
-      batch.set(docRef, v);
-    });
-
-    await batch.commit();
-    return toSeed;
-  } catch (e) {
-    console.warn('Could not seed initial data to Firestore:', e);
-    return [];
   }
 };
 
@@ -656,10 +624,4 @@ export const setAuthenticatedOfficer = (officer: OfficerUser | null): void => {
   } else {
     localStorage.removeItem(STORAGE_KEY_AUTH);
   }
-};
-
-export const resetToDemoData = (): void => {
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(INITIAL_VISITS));
-  localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(INITIAL_LOGS));
-  localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(INITIAL_QR_TOKENS));
 };

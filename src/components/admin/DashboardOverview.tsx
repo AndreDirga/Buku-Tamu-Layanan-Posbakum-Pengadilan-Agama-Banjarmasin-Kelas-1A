@@ -290,7 +290,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               })}
             </div>
             <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5">
-              <span>Jam operasional: 08:00 - 15:30 WITA</span>
+              <span>Jam operasional: Senin – Kamis 08:00 - 16:30 WITA | Jumat 08:00 - 17:00 WITA</span>
               <span className="font-semibold text-emerald-800">Senin - Jumat</span>
             </div>
           </div>

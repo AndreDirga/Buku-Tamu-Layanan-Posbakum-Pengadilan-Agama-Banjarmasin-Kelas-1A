@@ -4,7 +4,6 @@ import {
   clearAllVisits, 
   clearVisitsByPeriod, 
   clearVisitsByCase, 
-  resetToDemoData,
   logActivity 
 } from '../../services/storageService';
 import { 
@@ -35,7 +34,7 @@ export const ResetStatsModal: React.FC<ResetStatsModalProps> = ({
   totalVisitsCount,
   officerName = 'Admin',
 }) => {
-  const [resetType, setResetType] = useState<'all' | 'today' | 'week' | 'month' | 'year' | 'case' | 'demo'>('all');
+  const [resetType, setResetType] = useState<'all' | 'today' | 'week' | 'month' | 'year' | 'case'>('all');
   const [selectedCaseCategory, setSelectedCaseCategory] = useState(CASE_CATEGORIES[0].name);
   const [selectedMonth, setSelectedMonth] = useState('08');
   const [selectedYear, setSelectedYear] = useState('2026');
@@ -51,34 +50,23 @@ export const ResetStatsModal: React.FC<ResetStatsModalProps> = ({
     try {
       if (resetType === 'all') {
         const count = await clearAllVisits(officerName);
-        setSuccessMessage(`Berhasil mereset semua data kunjungan. ${count} data telah dikosongkan (Total Kunjungan & Statistik = 0).`);
+        setSuccessMessage(`Berhasil menghapus semua data kunjungan. ${count} data telah dikosongkan secara permanen (Total Kunjungan & Seluruh Statistik = 0, tanpa data template).`);
       } else if (resetType === 'today') {
         const count = await clearVisitsByPeriod('today', undefined, officerName);
-        setSuccessMessage(`Statistik Hari Ini berhasil direset (${count} kunjungan hari ini dihapus).`);
+        setSuccessMessage(`Statistik Hari Ini berhasil direset (${count} kunjungan hari ini dihapus permanen).`);
       } else if (resetType === 'week') {
         const count = await clearVisitsByPeriod('week', undefined, officerName);
-        setSuccessMessage(`Statistik Mingguan (7 hari terakhir) berhasil direset (${count} kunjungan dihapus).`);
+        setSuccessMessage(`Statistik Mingguan (7 hari terakhir) berhasil direset (${count} kunjungan dihapus permanen).`);
       } else if (resetType === 'month') {
         const monthStr = `${selectedYear}-${selectedMonth}`;
         const count = await clearVisitsByPeriod('month', monthStr, officerName);
-        setSuccessMessage(`Statistik Bulan ${selectedMonth}/${selectedYear} berhasil direset (${count} kunjungan dihapus).`);
+        setSuccessMessage(`Statistik Bulan ${selectedMonth}/${selectedYear} berhasil direset (${count} kunjungan dihapus permanen).`);
       } else if (resetType === 'year') {
         const count = await clearVisitsByPeriod('year', selectedYear, officerName);
-        setSuccessMessage(`Statistik Tahun ${selectedYear} berhasil direset (${count} kunjungan dihapus).`);
+        setSuccessMessage(`Statistik Tahun ${selectedYear} berhasil direset (${count} kunjungan dihapus permanen).`);
       } else if (resetType === 'case') {
         const count = await clearVisitsByCase(selectedCaseCategory, officerName);
-        setSuccessMessage(`Statistik kategori perkara "${selectedCaseCategory}" berhasil direset (${count} kunjungan dihapus).`);
-      } else if (resetType === 'demo') {
-        resetToDemoData();
-        logActivity({
-          userId: 'officer-admin',
-          userName: officerName,
-          userRole: 'Petugas Posbakum',
-          action: 'RESET_DATA_DEMO',
-          description: 'Memulihkan basis data ke setelan demo awal',
-          badgeColor: 'amber',
-        });
-        setSuccessMessage('Data sampel demo berhasil dimuat ulang ke sistem.');
+        setSuccessMessage(`Statistik kategori perkara "${selectedCaseCategory}" berhasil direset (${count} kunjungan dihapus permanen).`);
       }
 
       onSuccess();

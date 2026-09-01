@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
 import { CourtEmblem } from '../common/CourtEmblem';
 import { QrToken } from '../../types/posbakum';
@@ -8,6 +8,7 @@ import {
   toggleQrTokenStatus, 
   logActivity 
 } from '../../services/storageService';
+import { POSBAKUM_OFFICIAL_QR_IMAGE, POSBAKUM_OFFICIAL_QR_URL } from '../../assets/qrCodeData';
 import { 
   QrCode as QrIcon, 
   Printer, 
@@ -16,10 +17,11 @@ import {
   XCircle, 
   Copy, 
   ExternalLink, 
-  ShieldCheck, 
   Sparkles, 
   Check, 
-  Layers 
+  Layers,
+  Download,
+  ShieldCheck
 } from 'lucide-react';
 
 interface QrCodeManagerProps {
@@ -29,7 +31,8 @@ interface QrCodeManagerProps {
 export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithToken }) => {
   const [tokens, setTokens] = useState<QrToken[]>([]);
   const [selectedToken, setSelectedToken] = useState<QrToken | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [useOfficialQr, setUseOfficialQr] = useState<boolean>(true);
+  const [dynamicQrUrl, setDynamicQrUrl] = useState<string>('');
   const [newDeskName, setNewDeskName] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -43,44 +46,47 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
     }
   }, []);
 
-  // Current Base URL for QR
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://pa-banjarmasin.go.id';
+  // Base URL for dynamic QR
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : POSBAKUM_OFFICIAL_QR_URL;
 
-  // Generate target URL for QR
-  const getTargetUrl = () => {
-    const tokenStr = selectedToken ? selectedToken.token : 'POSBAKUM-MEJA-1';
-    return `${currentOrigin}?t=${tokenStr}&mode=tamu`;
-  };
+  // Active target URL
+  const targetUrl = useOfficialQr 
+    ? POSBAKUM_OFFICIAL_QR_URL 
+    : `${currentOrigin}?t=${selectedToken ? selectedToken.token : 'POSBAKUM-MEJA-1'}&mode=tamu`;
 
-  const targetUrl = getTargetUrl();
+  // Active displayed QR image (use official uploaded QR image when in official mode)
+  const currentQrImage = useOfficialQr ? POSBAKUM_OFFICIAL_QR_IMAGE : (dynamicQrUrl || POSBAKUM_OFFICIAL_QR_IMAGE);
 
-  // Generate QR Code image when targetUrl changes
+  // Generate dynamic QR Code when switching to custom desk token
   useEffect(() => {
-    QRCode.toDataURL(targetUrl, {
-      width: 320,
-      margin: 2,
-      color: {
-        dark: '#064e3b', // deep emerald
-        light: '#ffffff',
-      },
-      errorCorrectionLevel: 'H',
-    })
-      .then((url) => {
-        setQrDataUrl(url);
+    if (!useOfficialQr) {
+      QRCode.toDataURL(targetUrl, {
+        width: 600,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#ffffff',
+        },
+        errorCorrectionLevel: 'Q',
       })
-      .catch((err) => {
-        console.error('Error generating QR:', err);
-      });
-  }, [targetUrl, selectedToken]);
+        .then((url) => {
+          setDynamicQrUrl(url);
+        })
+        .catch((err) => {
+          console.error('Error generating dynamic QR:', err);
+        });
+    }
+  }, [targetUrl, useOfficialQr]);
 
-  const handleCreateToken = (e: React.FormEvent) => {
+  const handleCreateToken = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDeskName.trim() || !newLocation.trim()) return;
 
-    const created = addQrToken(newDeskName.trim(), newLocation.trim());
+    const created = await addQrToken(newDeskName.trim(), newLocation.trim());
     const updated = getStoredQrTokens();
     setTokens(updated);
     setSelectedToken(created);
+    setUseOfficialQr(false);
     setNewDeskName('');
     setNewLocation('');
     setShowAddForm(false);
@@ -95,8 +101,8 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
     });
   };
 
-  const handleToggleStatus = (id: string) => {
-    toggleQrTokenStatus(id);
+  const handleToggleStatus = async (id: string) => {
+    await toggleQrTokenStatus(id);
     const updated = getStoredQrTokens();
     setTokens(updated);
     if (selectedToken && selectedToken.id === id) {
@@ -109,6 +115,15 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
     navigator.clipboard.writeText(targetUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadQr = () => {
+    const link = document.createElement('a');
+    link.href = currentQrImage;
+    link.download = `qrcode-posbakum-pa-banjarmasin-${useOfficialQr ? 'resmi' : selectedToken?.token || 'meja'}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handlePrintStandee = () => {
@@ -125,18 +140,28 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
             <span>QR CODE BUKU TAMU PETUGAS</span>
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Kelola kode QR untuk ditempel pada meja konsultasi dan loket PTSP
+            Kelola & cetak kode QR resmi untuk ditempel pada meja konsultasi dan loket PTSP
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handlePrintStandee}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition shrink-0"
-        >
-          <Printer className="w-3.5 h-3.5" />
-          <span>Cetak Standee Meja</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleDownloadQr}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl shadow-xs transition shrink-0"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Unduh Gambar QR (.PNG)</span>
+          </button>
+          <button
+            type="button"
+            onClick={handlePrintStandee}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition shrink-0"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Cetak Standee Meja</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
@@ -154,29 +179,29 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
             <div className="flex flex-col items-center pt-1">
               <CourtEmblem size="lg" showText={false} className="justify-center text-center" />
               <div className="mt-1.5 text-[10px] font-extrabold tracking-wider uppercase text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-200">
-                BUKU TAMU POSBAKUM
+                BUKU TAMU DIGITAL POSBAKUM
               </div>
               <h3 className="text-base font-black text-slate-900 mt-1">
                 PENGADILAN AGAMA BANJARMASIN KELAS 1A
               </h3>
-              <p className="text-[11px] text-slate-500">
-                {selectedToken ? selectedToken.name : 'Meja Pelayanan Terpadu Satu Pintu (PTSP)'}
+              <p className="text-[11px] text-slate-500 font-medium">
+                {useOfficialQr 
+                  ? 'Loket Pelayanan Terpadu Satu Pintu (PTSP) & Meja Posbakum' 
+                  : (selectedToken ? selectedToken.name : 'Meja Layanan Pos Bantuan Hukum')}
               </p>
             </div>
 
             {/* Big QR Code Display */}
-            <div className="relative inline-block p-3 bg-white rounded-2xl border-2 border-emerald-800/20 shadow-xs">
-              {qrDataUrl ? (
-                <img
-                  src={qrDataUrl}
-                  alt="QR Code Posbakum"
-                  className="w-44 h-44 sm:w-52 sm:h-52 object-contain mx-auto"
-                />
-              ) : (
-                <div className="w-44 h-44 flex items-center justify-center text-slate-400 text-xs">
-                  Menyiapkan QR Code...
-                </div>
-              )}
+            <div className="relative inline-block p-4 bg-white rounded-2xl border-2 border-emerald-800/20 shadow-xs">
+              <img
+                src={currentQrImage}
+                alt="QR Code Buku Tamu Posbakum"
+                className="w-48 h-48 sm:w-60 sm:h-60 object-contain mx-auto transition-transform hover:scale-105 duration-200"
+              />
+              <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                <ShieldCheck className="w-3 h-3 text-emerald-700" />
+                <span>QR Code Resmi Terverifikasi</span>
+              </div>
             </div>
 
             {/* Instruction Text */}
@@ -185,14 +210,14 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
                 Arahkan Kamera HP untuk Mengisi Buku Tamu
               </h4>
               <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
-                Buka aplikasi kamera di HP Anda dan arahkan ke kode QR di atas untuk membuka formulir pendaftaran Posbakum.
+                Buka aplikasi kamera atau QR Scanner di HP Anda dan arahkan ke kode QR di atas untuk membuka formulir pendaftaran Posbakum.
               </p>
             </div>
 
             {/* QR Metadata Footer */}
             <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-left text-xs">
               <div className="truncate pr-2">
-                <div className="text-[9px] font-bold uppercase text-slate-400">Target URL:</div>
+                <div className="text-[9px] font-bold uppercase text-slate-400">Target URL Buku Tamu:</div>
                 <div className="font-mono text-emerald-800 truncate font-semibold text-[11px]">
                   {targetUrl}
                 </div>
@@ -209,7 +234,7 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOpenGuestWithToken(selectedToken?.token)}
+                  onClick={() => onOpenGuestWithToken(useOfficialQr ? undefined : selectedToken?.token)}
                   className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-800 transition"
                   title="Buka Form Pengunjung"
                 >
@@ -222,14 +247,46 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
 
         {/* Right Column: Desk Tokens Manager & Config (5 Cols) */}
         <div className="lg:col-span-5 space-y-3">
+          {/* Official QR Mode Selector */}
+          <div className="bg-white rounded-xl p-3.5 shadow-xs border border-slate-200 space-y-2.5">
+            <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+              <QrIcon className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Pilihan Kode QR</span>
+            </div>
+            
+            <div 
+              onClick={() => setUseOfficialQr(true)}
+              className={`p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+                useOfficialQr 
+                  ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20' 
+                  : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="space-y-0.5">
+                <div className="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
+                  <span>QR Code Utama / Standar</span>
+                  <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[9px] font-bold">
+                    Aktif
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-600">
+                  Menggunakan file kode QR resmi utama aplikasi
+                </div>
+              </div>
+              <div className="w-4 h-4 rounded-full border-2 border-emerald-600 flex items-center justify-center">
+                {useOfficialQr && <div className="w-2 h-2 bg-emerald-600 rounded-full" />}
+              </div>
+            </div>
+          </div>
+
           <div className="bg-white rounded-xl p-3.5 shadow-xs border border-slate-200 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Daftar Meja / Lokasi QR</span>
+                  <span>Daftar Meja / Lokasi Khusus</span>
                 </h3>
-                <p className="text-[11px] text-slate-400">Token QR dinamis aktif per pos</p>
+                <p className="text-[11px] text-slate-400">Pilih meja untuk QR khusus per lokasi</p>
               </div>
               <button
                 type="button"
@@ -286,12 +343,13 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
             {/* Tokens List */}
             <div className="space-y-2">
               {tokens.map((tokenItem) => {
-                const isSelected = selectedToken?.id === tokenItem.id;
+                const isSelected = !useOfficialQr && selectedToken?.id === tokenItem.id;
                 return (
                   <div
                     key={tokenItem.id}
                     onClick={() => {
                       setSelectedToken(tokenItem);
+                      setUseOfficialQr(false);
                     }}
                     className={`p-2.5 rounded-lg border transition cursor-pointer flex items-center justify-between ${
                       isSelected
@@ -343,10 +401,10 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1">
             <div className="font-bold text-slate-800 flex items-center gap-1 text-[11px]">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Keunggulan QR Dinamis
+              Keunggulan Kode QR Resmi
             </div>
             <p className="text-[10px] leading-relaxed text-slate-500">
-              QR dinamis memungkinkan pengadilan mencatat asal meja saat formulir diisi serta menonaktifkan kode QR jika sewaktu-waktu meja layanan sedang direlokasi tanpa perlu mengganti URL aplikasi utama.
+              Kode QR ini dapat dicetak langsung atau diunduh format resolusi tinggi (PNG/SVG) untuk ditempel pada meja konsultasi dan loket PTSP agar masyarakat dapat memindai buku tamu dengan cepat.
             </p>
           </div>
         </div>
@@ -354,3 +412,4 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
     </div>
   );
 };
+

@@ -179,7 +179,7 @@ export const RoleSelectionPortal: React.FC<RoleSelectionPortalProps> = ({
               Informasi Layanan Pos Bantuan Hukum (POSBAKUM)
             </div>
             <div className="text-[10px] text-slate-600 leading-relaxed">
-              Layanan Pos Bantuan Hukum di Pengadilan Agama Banjarmasin diberikan secara <strong>Cuma-cuma (Gratis / Rp 0,-)</strong> bagi masyarakat tidak mampu sesuai Perma No. 1 Tahun 2014. Jam layanan operasional: Senin – Kamis: 08.30 – 15.00 WITA, Jumat: 08.30 – 15.30 WITA.
+              Layanan Pos Bantuan Hukum di Pengadilan Agama Banjarmasin diberikan secara <strong>Cuma-cuma (Gratis / Rp 0,-)</strong> bagi masyarakat tidak mampu sesuai Perma No. 1 Tahun 2014. Jam layanan operasional: Senin – Kamis: 08.00 – 16.30 WITA, Jumat: 08.00 – 17.00 WITA.
             </div>
           </div>
         </div>
