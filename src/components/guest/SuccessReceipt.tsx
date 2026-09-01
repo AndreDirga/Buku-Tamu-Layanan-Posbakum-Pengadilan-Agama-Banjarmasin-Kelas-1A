@@ -107,7 +107,7 @@ export const SuccessReceipt: React.FC<SuccessReceiptProps> = ({
           {/* Visitor Brief Dossier */}
           <div className="bg-slate-50 rounded-xl p-3 text-left border border-slate-200 space-y-1.5 text-[11px]">
             <div className="flex justify-between py-0.5 border-b border-slate-200">
-              <span className="text-slate-500 font-medium">Nama Penggugat / Pemohon</span>
+              <span className="text-slate-500 font-medium">Nama Penggugat / Pemohon / Tergugat / Termohon</span>
               <span className="font-bold text-slate-900 text-right">{visit.name}</span>
             </div>
             <div className="flex justify-between py-0.5 border-b border-slate-200">

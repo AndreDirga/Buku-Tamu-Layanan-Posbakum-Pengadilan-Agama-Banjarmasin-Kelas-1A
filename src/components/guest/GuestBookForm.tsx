@@ -80,7 +80,7 @@ export const GuestBookForm: React.FC<GuestBookFormProps> = ({
 
   const validateForm = (): boolean => {
     if (!name.trim()) {
-      setErrorMessage('Nama Penggugat / Pemohon wajib diisi.');
+      setErrorMessage('Nama Penggugat / Pemohon / Tergugat / Termohon wajib diisi.');
       return false;
     }
     if (!ktpAddress.trim()) {
@@ -266,7 +266,7 @@ export const GuestBookForm: React.FC<GuestBookFormProps> = ({
             {/* Nama */}
             <div className="space-y-1">
               <label htmlFor="name-input" className="block text-[11px] font-semibold text-slate-700">
-                Nama Penggugat / Pemohon <span className="text-rose-600">*</span>
+                Nama Penggugat / Pemohon / Tergugat / Termohon <span className="text-rose-600">*</span>
               </label>
               <input
                 id="name-input"

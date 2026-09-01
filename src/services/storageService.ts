@@ -197,26 +197,38 @@ export const saveVisit = async (
   return visitRecord;
 };
 
-// Update visit status / notes by Authorized Admin/Officer
-export const updateVisitStatus = async (
-  visitId: string, 
-  status: Visit['status'], 
-  notes?: string,
+// Update visit status / notes / caseType by Authorized Admin/Officer
+export const updateVisitDetails = async (
+  visitId: string,
+  updates: {
+    status?: Visit['status'];
+    notes?: string;
+    caseCategory?: string;
+    caseType?: string;
+    caseTypeOther?: string;
+    officerName?: string;
+  },
   officerName?: string
 ): Promise<Visit | null> => {
   const visits = getStoredVisits();
-  const index = visits.findIndex(v => v.id === visitId);
+  const index = visits.findIndex((v) => v.id === visitId);
   if (index === -1) return null;
 
+  const prev = visits[index];
   const nowIso = new Date().toISOString();
-  visits[index].status = status;
-  if (notes !== undefined) {
-    visits[index].notes = notes;
-  }
-  visits[index].updatedAt = nowIso;
-  if (officerName) {
-    visits[index].officerName = officerName;
-  }
+
+  const updatedVisit: Visit = {
+    ...prev,
+    ...(updates.status ? { status: updates.status } : {}),
+    ...(updates.notes !== undefined ? { notes: updates.notes } : {}),
+    ...(updates.caseCategory ? { caseCategory: updates.caseCategory } : {}),
+    ...(updates.caseType ? { caseType: updates.caseType } : {}),
+    ...(updates.caseTypeOther !== undefined ? { caseTypeOther: updates.caseTypeOther } : {}),
+    ...(updates.officerName || officerName ? { officerName: updates.officerName || officerName } : {}),
+    updatedAt: nowIso,
+  };
+
+  visits[index] = updatedVisit;
 
   // Local storage update
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
@@ -225,11 +237,14 @@ export const updateVisitStatus = async (
   try {
     const docRef = doc(db, 'visits', visitId);
     const payload: Partial<Visit> = {
-      status,
       updatedAt: nowIso,
     };
-    if (notes !== undefined) payload.notes = notes;
-    if (officerName) payload.officerName = officerName;
+    if (updates.status) payload.status = updates.status;
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+    if (updates.caseCategory) payload.caseCategory = updates.caseCategory;
+    if (updates.caseType) payload.caseType = updates.caseType;
+    if (updates.caseTypeOther !== undefined) payload.caseTypeOther = updates.caseTypeOther;
+    if (updates.officerName || officerName) payload.officerName = updates.officerName || officerName;
 
     const cleanPayload = sanitizeForFirestore(payload);
     await updateDoc(docRef, cleanPayload);
@@ -237,7 +252,35 @@ export const updateVisitStatus = async (
     console.error('Failed to update visit in Firestore:', err);
   }
 
-  return visits[index];
+  // Log activity
+  const changesSummary = [];
+  if (updates.caseType && updates.caseType !== prev.caseType) {
+    changesSummary.push(`Jenis perkara diubah ke "${updates.caseType}"`);
+  }
+  if (updates.status && updates.status !== prev.status) {
+    changesSummary.push(`Status diubah ke "${updates.status}"`);
+  }
+
+  logActivity({
+    action: 'UPDATE_KUNJUNGAN',
+    description: `Petugas memperbarui ${prev.visitNumber} (${prev.name}): ${changesSummary.join(', ') || 'Catatan/Status diperbarui'}`,
+    userRole: 'Petugas Posbakum',
+    userName: officerName || 'Admin Posbakum',
+    userId: 'admin-officer',
+    badgeColor: 'emerald',
+  });
+
+  return updatedVisit;
+};
+
+// Update visit status / notes by Authorized Admin/Officer (Legacy wrapper)
+export const updateVisitStatus = async (
+  visitId: string, 
+  status: Visit['status'], 
+  notes?: string,
+  officerName?: string
+): Promise<Visit | null> => {
+  return updateVisitDetails(visitId, { status, notes, officerName }, officerName);
 };
 
 // Delete single visit by Authorized Officer/Admin

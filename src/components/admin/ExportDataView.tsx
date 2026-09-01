@@ -64,7 +64,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       'Nomor Kunjungan',
       'Tanggal',
       'Waktu',
-      'Nama Penggugat / Pemohon',
+      'Nama Penggugat / Pemohon / Tergugat / Termohon',
       'Alamat KTP',
       'Alamat Domisili',
       'Email',

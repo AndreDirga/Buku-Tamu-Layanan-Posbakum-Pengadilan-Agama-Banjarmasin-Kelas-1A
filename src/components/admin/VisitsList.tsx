@@ -325,7 +325,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                 <th className="px-2 py-2 text-center w-8">No</th>
                 <th className="px-3 py-2">No. Antrian</th>
                 <th className="px-3 py-2">Tanggal & Waktu</th>
-                <th className="px-3 py-2">Nama Penggugat / Pemohon</th>
+                <th className="px-3 py-2">Nama Penggugat / Pemohon / Tergugat / Termohon</th>
                 <th className="px-3 py-2">WhatsApp</th>
                 <th className="px-3 py-2">Jenis Perkara</th>
                 <th className="px-3 py-2 text-center">Status</th>
@@ -486,7 +486,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
 
                 <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[11px] space-y-0.5">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Penggugat/Pemohon:</span>
+                    <span className="text-slate-400">Penggugat/Pemohon/Tergugat/Termohon:</span>
                     <span className="font-semibold text-slate-800 truncate max-w-[180px]">{visit.name}</span>
                   </div>
                   <div className="flex justify-between">
@@ -555,7 +555,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                   <span className="font-mono font-bold text-slate-900">{deleteTarget.visitNumber}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Nama Penggugat / Pemohon:</span>
+                  <span className="text-slate-400">Nama Penggugat / Pemohon / Tergugat / Termohon:</span>
                   <span className="font-bold text-slate-800">{deleteTarget.name}</span>
                 </div>
                 <div className="flex justify-between">

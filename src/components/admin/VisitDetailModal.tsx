@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Visit } from '../../types/posbakum';
+import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
 import { CourtEmblem } from '../common/CourtEmblem';
-import { updateVisitStatus, logActivity, deleteVisit } from '../../services/storageService';
+import { updateVisitDetails, logActivity, deleteVisit } from '../../services/storageService';
 import { 
   X, 
   Printer, 
@@ -22,7 +22,8 @@ import {
   Save,
   MessageSquare,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Edit3
 } from 'lucide-react';
 
 interface VisitDetailModalProps {
@@ -40,17 +41,51 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
 }) => {
   const [status, setStatus] = useState<Visit['status']>(visit.status);
   const [notes, setNotes] = useState(visit.notes || '');
+  
+  // Case Category & Type manual editing state for Admin
+  const [isEditingCase, setIsEditingCase] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(() => {
+    const found = CASE_CATEGORIES.find(c => c.name === visit.caseCategory);
+    return found ? found.id : CASE_CATEGORIES[0].id;
+  });
+  const [selectedCaseCategoryName, setSelectedCaseCategoryName] = useState(visit.caseCategory || CASE_CATEGORIES[0].name);
+  const [selectedCaseType, setSelectedCaseType] = useState(visit.caseType || '');
+  const [selectedCaseTypeOther, setSelectedCaseTypeOther] = useState(visit.caseTypeOther || '');
+
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  const currentCategoryObj = CASE_CATEGORIES.find(c => c.id === selectedCategoryId) || CASE_CATEGORIES[0];
+
+  const handleCategoryChange = (catId: string) => {
+    setSelectedCategoryId(catId);
+    const cat = CASE_CATEGORIES.find(c => c.id === catId);
+    if (cat) {
+      setSelectedCaseCategoryName(cat.name);
+      setSelectedCaseType(cat.types[0] || '');
+      setSelectedCaseTypeOther('');
+    }
+  };
+
   const handleSaveStatus = async () => {
     setIsSaving(true);
     try {
-      const updated = await updateVisitStatus(visit.id, status, notes, 'Admin');
+      const updated = await updateVisitDetails(
+        visit.id,
+        {
+          status,
+          notes,
+          caseCategory: selectedCaseCategoryName,
+          caseType: selectedCaseType,
+          caseTypeOther: selectedCaseTypeOther,
+        },
+        'Admin'
+      );
       if (updated) {
         onVisitUpdated(updated);
+        setIsEditingCase(false);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
       }
@@ -169,12 +204,12 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
             <div className="space-y-2.5">
               <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1 border-b border-slate-100 pb-1">
                 <User className="w-3 h-3 text-emerald-600" />
-                Identitas Penggugat / Pemohon
+                Identitas Penggugat / Pemohon / Tergugat / Termohon
               </h4>
 
               <div className="space-y-2 text-xs">
                 <div>
-                  <div className="text-[10px] font-semibold text-slate-400">Nama Penggugat / Pemohon</div>
+                  <div className="text-[10px] font-semibold text-slate-400">Nama Penggugat / Pemohon / Tergugat / Termohon</div>
                   <div className="font-bold text-slate-900 text-sm">{visit.name}</div>
                 </div>
 
@@ -225,23 +260,97 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
 
             {/* Column 2: Perkara & Media (Selfie + Signature) */}
             <div className="space-y-2.5">
-              <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1 border-b border-slate-100 pb-1">
-                <Scale className="w-3 h-3 text-emerald-600" />
-                Perkara & Berkas Digital
-              </h4>
-
-              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200 space-y-1 text-xs">
-                <div>
-                  <span className="text-slate-400 block text-[9px] uppercase font-bold">Kategori</span>
-                  <span className="font-semibold text-slate-800 text-[11px]">{visit.caseCategory}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[9px] uppercase font-bold">Jenis Perkara</span>
-                  <span className="font-black text-xs text-emerald-900">
-                    {visit.caseType} {visit.caseTypeOther ? `(${visit.caseTypeOther})` : ''}
-                  </span>
-                </div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                  <Scale className="w-3 h-3 text-emerald-600" />
+                  Perkara & Berkas Digital
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingCase(!isEditingCase)}
+                  className="text-[10px] text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 transition"
+                  title="Ubah jenis perkara jika pengunjung salah memilih"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>{isEditingCase ? 'Batal Ubah' : 'Ubah Jenis Perkara'}</span>
+                </button>
               </div>
+
+              {/* Case Details or Manual Edit Form */}
+              {!isEditingCase ? (
+                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200 space-y-1 text-xs">
+                  <div>
+                    <span className="text-slate-400 block text-[9px] uppercase font-bold">Kategori</span>
+                    <span className="font-semibold text-slate-800 text-[11px]">{selectedCaseCategoryName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[9px] uppercase font-bold">Jenis Perkara</span>
+                    <span className="font-black text-xs text-emerald-900">
+                      {selectedCaseType} {selectedCaseTypeOther ? `(${selectedCaseTypeOther})` : ''}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-amber-50/70 rounded-xl p-2.5 border border-amber-200 space-y-2 text-xs animate-fadeIn">
+                  <div className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
+                    <Edit3 className="w-3 h-3" />
+                    <span>Ubah Jenis Perkara (Mode Petugas)</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-700 uppercase mb-0.5">
+                      Kategori Perkara
+                    </label>
+                    <select
+                      value={selectedCategoryId}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
+                      className="w-full text-[11px] font-medium p-1.5 rounded-lg border border-slate-300 bg-white focus:ring-1 focus:ring-emerald-500"
+                    >
+                      {CASE_CATEGORIES.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-700 uppercase mb-0.5">
+                      Jenis Perkara / Permohonan
+                    </label>
+                    <select
+                      value={selectedCaseType}
+                      onChange={(e) => setSelectedCaseType(e.target.value)}
+                      className="w-full text-[11px] font-bold p-1.5 rounded-lg border border-emerald-300 bg-white text-emerald-950 focus:ring-1 focus:ring-emerald-500"
+                    >
+                      {currentCategoryObj.types.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedCaseType === 'Lainnya' && (
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-700 uppercase mb-0.5">
+                        Keterangan Jenis Perkara Lainnya
+                      </label>
+                      <input
+                        type="text"
+                        value={selectedCaseTypeOther}
+                        onChange={(e) => setSelectedCaseTypeOther(e.target.value)}
+                        placeholder="Tuliskan jenis perkara..."
+                        className="w-full text-[11px] p-1.5 rounded-lg border border-slate-300 bg-white"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[9px] text-amber-800">
+                    * Data identitas, selfie, dan tanda tangan pengunjung tetap aman dan tidak berubah.
+                  </p>
+                </div>
+              )}
 
               {/* Photos Grid */}
               <div className="grid grid-cols-2 gap-2">

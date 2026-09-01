@@ -4,7 +4,7 @@ export interface Visit {
   visitedAt: string; // ISO date string
   dateDisplay: string; // e.g. "31 Agustus 2026"
   timeDisplay: string; // e.g. "10:35 WITA"
-  name: string; // Nama Penggugat/Pemohon
+  name: string; // Nama Penggugat/Pemohon/Tergugat/Termohon
   ktpAddress: string;
   domicileAddress: string;
   domicileSameAsKtp: boolean;
@@ -130,7 +130,7 @@ export const CASE_CATEGORIES: CaseCategory[] = [
     name: 'D. Tahapan/Jawaban dalam Perkara',
     types: [
       'Jawaban Termohon',
-      'Replik',
+      'Replik/Duplik',
       'Kesimpulan Penggugat/Pemohon/Termohon',
       'Verzet',
     ],

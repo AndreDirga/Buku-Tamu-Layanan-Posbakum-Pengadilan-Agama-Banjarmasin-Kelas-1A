@@ -98,7 +98,7 @@ export const SHEET_HEADERS = [
   'Nomor Kunjungan',
   'Tanggal',
   'Waktu',
-  'Nama Pemohon / Penggugat',
+  'Nama Penggugat / Pemohon / Tergugat / Termohon',
   'Alamat KTP',
   'Alamat Domisili',
   'No. WhatsApp',
