@@ -44,7 +44,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'visits', label: 'Data Kunjungan', icon: Users },
     { id: 'statistics', label: 'Statistik & Tren', icon: BarChart3 },
-    { id: 'export', label: 'Export Data CSV', icon: FileSpreadsheet },
+    { id: 'export', label: 'Export & Google Sheets', icon: FileSpreadsheet },
     { id: 'qr', label: 'QR Code Petugas', icon: QrCode },
     { id: 'settings', label: 'Pengaturan & Log', icon: Settings },
   ] as const;

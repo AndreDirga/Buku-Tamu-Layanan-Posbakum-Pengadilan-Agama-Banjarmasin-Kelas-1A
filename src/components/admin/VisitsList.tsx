@@ -227,7 +227,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
             className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition shrink-0"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>Export Data CSV</span>
+            <span>Export & Google Sheets</span>
           </button>
         </div>
       </div>

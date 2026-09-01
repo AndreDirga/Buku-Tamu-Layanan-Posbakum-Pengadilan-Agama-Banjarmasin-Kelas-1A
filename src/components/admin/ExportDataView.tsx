@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
 import { logActivity } from '../../services/storageService';
+import { GoogleSheetsSync } from './GoogleSheetsSync';
 import { 
   FileSpreadsheet, 
   Download, 
@@ -10,7 +11,8 @@ import {
   ShieldCheck, 
   AlertCircle,
   FileText,
-  Clock
+  Clock,
+  Sparkles
 } from 'lucide-react';
 
 interface ExportDataViewProps {
@@ -23,6 +25,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
   const [selectedCaseType, setSelectedCaseType] = useState('ALL');
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [activeExportTab, setActiveExportTab] = useState<'sheets' | 'csv'>('sheets');
 
   // Flatten case types
   const allCaseTypes = useMemo(() => {
@@ -35,7 +38,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
     return list;
   }, []);
 
-  const filteredVisits = useMemo(() => {
+  const filteredVisits异 = useMemo(() => {
     return visits.filter((v) => {
       if (selectedCaseType !== 'ALL' && v.caseType !== selectedCaseType) {
         return false;
@@ -52,6 +55,8 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
     });
   }, [visits, startDate, endDate, selectedCaseType]);
 
+  const filteredVisits = filteredVisits异;
+
   const generateAndDownloadCsv = () => {
     setIsExporting(true);
 
@@ -67,15 +72,16 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       'Pekerjaan',
       'Kategori Perkara',
       'Jenis Perkara',
+      'Status Layanan',
+      'Petugas',
       'Nama File Selfie',
       'Nama File Tanda Tangan',
-      'Status Layanan',
     ];
 
     const escapeCsv = (str: string | undefined | null) => {
       if (!str) return '""';
-      const clean = String(str).replace(/"/g, '""');
-      return `"${clean}"`;
+      const clean技巧 = String(str).replace(/"/g, '""');
+      return `"${clean技巧}"`;
     };
 
     const rows = filteredVisits.map((v) => [
@@ -90,9 +96,10 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       escapeCsv(v.occupation + (v.occupationOther ? ` (${v.occupationOther})` : '')),
       escapeCsv(v.caseCategory),
       escapeCsv(v.caseType + (v.caseTypeOther ? ` (${v.caseTypeOther})` : '')),
+      escapeCsv(v.status),
+      escapeCsv(v.officerName || 'Admin'),
       escapeCsv(v.selfieFileName || `${v.visitNumber}-selfie.jpg`),
       escapeCsv(v.signatureFileName || `${v.visitNumber}-signature.png`),
-      escapeCsv(v.status),
     ]);
 
     const csvContent = [
@@ -127,16 +134,46 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
   };
 
   return (
-    <div className="space-y-3.5 text-xs font-sans">
+    <div className="space-y-4 text-xs font-sans">
       {/* Title - High Density */}
-      <div>
-        <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight flex items-center gap-1.5">
-          <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
-          <span>EXPORT DATA BUKU TAMU</span>
-        </h2>
-        <p className="text-[11px] text-slate-500 mt-0.5">
-          Unduh data kunjungan buku tamu dalam format CSV untuk pelaporan berkala Pengadilan Agama Banjarmasin Kelas 1A
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight flex items-center gap-1.5">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
+            <span>EXPORT & SINKRONISASI BUKU TAMU</span>
+          </h2>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Ekspor rekapitulasi data buku tamu Posbakum ke Google Sheets langsung atau unduh berkas CSV.
+          </p>
+        </div>
+
+        {/* Export Target Switcher */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-200/80 rounded-xl w-fit">
+          <button
+            type="button"
+            onClick={() => setActiveExportTab('sheets')}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+              activeExportTab === 'sheets'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Google Sheets (Cloud)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveExportTab('csv')}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+              activeExportTab === 'csv'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Berkas CSV (.csv)</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Control Box */}
@@ -188,39 +225,49 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-          <div className="text-[11px] font-medium text-slate-600">
-            Ditemukan <span className="font-bold text-emerald-800 font-mono">{filteredVisits.length}</span> baris data siap diekspor.
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px]">
+          <div className="font-medium text-slate-600">
+            Ditemukan <span className="font-bold text-emerald-800 font-mono">{filteredVisits.length}</span> baris data yang memenuhi kriteria filter.
           </div>
 
-          <button
-            type="button"
-            onClick={generateAndDownloadCsv}
-            disabled={filteredVisits.length === 0 || isExporting}
-            className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 transition disabled:opacity-50"
-          >
-            {exportSuccess ? (
-              <>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                <span>File CSV Berhasil Diunduh!</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-3.5 h-3.5" />
-                <span>EXPORT CSV SEKARANG</span>
-              </>
-            )}
-          </button>
+          {activeExportTab === 'csv' && (
+            <button
+              type="button"
+              onClick={generateAndDownloadCsv}
+              disabled={filteredVisits.length === 0 || isExporting}
+              className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 transition disabled:opacity-50"
+            >
+              {exportSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>File CSV Berhasil Diunduh!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>UNDUH CSV SEKARANG</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Conditional Google Sheets Integration Panel */}
+      {activeExportTab === 'sheets' && (
+        <GoogleSheetsSync
+          filteredVisits={filteredVisits}
+          allVisitsCount={visits.length}
+        />
+      )}
 
       {/* Security & Standard Note */}
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-2.5 text-emerald-950 text-xs leading-relaxed">
         <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
         <div className="space-y-0.5">
-          <div className="font-bold text-[11px]">Standar Keamanan Berkas CSV:</div>
+          <div className="font-bold text-[11px]">Standar Keamanan Berkas:</div>
           <p className="text-emerald-900/80 text-[11px]">
-            Untuk menjaga keamanan dan privasi berkas perkara, foto selfie dan tanda tangan tidak diekspor sebagai payload base64 di dalam file CSV, melainkan direferensikan melalui penamaan file unik terenkripsi internal (contoh: <code className="bg-emerald-100 px-1 py-0.5 rounded text-emerald-950 font-mono text-[10px]">KJG-20260831-0001-selfie.jpg</code>) yang diaudit melalui portal petugas.
+            Untuk menjaga privasi dan performa lembar kerja, berkas foto selfie dan tanda tangan direferensikan melalui penamaan file unik terenkripsi internal (contoh: <code className="bg-emerald-100 px-1 py-0.5 rounded text-emerald-950 font-mono text-[10px]">KJG-20260831-0001-selfie.jpg</code>) yang dapat diverifikasi melalui dashboard audit petugas.
           </p>
         </div>
       </div>
@@ -240,22 +287,40 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
                 <th className="px-2.5 py-1.5">Nama</th>
                 <th className="px-2.5 py-1.5">WhatsApp</th>
                 <th className="px-2.5 py-1.5">Jenis Perkara</th>
+                <th className="px-2.5 py-1.5">Status</th>
                 <th className="px-2.5 py-1.5">File Selfie</th>
                 <th className="px-2.5 py-1.5">File Tanda Tangan</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredVisits.map((v) => (
-                <tr key={v.id} className="hover:bg-slate-50">
-                  <td className="px-2.5 py-1.5 font-mono font-bold text-slate-900">{v.visitNumber}</td>
-                  <td className="px-2.5 py-1.5 text-slate-600 font-mono text-[11px]">{v.dateDisplay}</td>
-                  <td className="px-2.5 py-1.5 font-semibold text-slate-800">{v.name}</td>
-                  <td className="px-2.5 py-1.5 font-mono text-emerald-800 text-[11px]">{v.whatsapp}</td>
-                  <td className="px-2.5 py-1.5 text-slate-700">{v.caseType}</td>
-                  <td className="px-2.5 py-1.5 font-mono text-slate-400 text-[10px]">{v.selfieFileName || `${v.visitNumber}-selfie.jpg`}</td>
-                  <td className="px-2.5 py-1.5 font-mono text-slate-400 text-[10px]">{v.signatureFileName || `${v.visitNumber}-signature.png`}</td>
+              {filteredVisits.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-400 text-xs">
+                    Tidak ada data kunjungan pada filter yang dipilih.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                filteredVisits.map((v) => (
+                  <tr key={v.id} className="hover:bg-slate-50">
+                    <td className="px-2.5 py-1.5 font-mono font-bold text-slate-900">{v.visitNumber}</td>
+                    <td className="px-2.5 py-1.5 text-slate-600 font-mono text-[11px]">{v.dateDisplay}</td>
+                    <td className="px-2.5 py-1.5 font-semibold text-slate-800">{v.name}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-emerald-800 text-[11px]">{v.whatsapp}</td>
+                    <td className="px-2.5 py-1.5 text-slate-700">{v.caseType}</td>
+                    <td className="px-2.5 py-1.5">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        v.status === 'Selesai' ? 'bg-emerald-100 text-emerald-800' :
+                        v.status === 'Sedang Dilayani' ? 'bg-amber-100 text-amber-800' :
+                        'bg-slate-100 text-slate-700'
+                      }`}>
+                        {v.status}
+                      </span>
+                    </td>
+                    <td className="px-2.5 py-1.5 font-mono text-slate-400 text-[10px]">{v.selfieFileName || `${v.visitNumber}-selfie.jpg`}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-slate-400 text-[10px]">{v.signatureFileName || `${v.visitNumber}-signature.png`}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
