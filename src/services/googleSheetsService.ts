@@ -5,6 +5,7 @@ import {
   User, 
   signOut 
 } from 'firebase/auth';
+import * as XLSX from 'xlsx';
 import { auth } from './firebase';
 import { Visit } from '../types/posbakum';
 
@@ -67,9 +68,12 @@ export const signInWithGoogleSheets = async (): Promise<{ user: User; accessToke
 
     if (errorCode === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
       const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'domain ini';
-      throw new Error(
-        `Domain ${currentHost} belum terdaftar di Authorized Domains Firebase Authentication. Mohon setujui konfigurasi integrasi Google Workspace yang muncul, atau gunakan tombol Ekspor CSV/Excel di bawah.`
+      const customError: any = new Error(
+        `Domain ${currentHost} belum terdaftar di Authorized Domains Firebase Authentication.`
       );
+      customError.code = 'auth/unauthorized-domain';
+      customError.domain = currentHost;
+      throw customError;
     }
 
     if (errorCode === 'auth/popup-blocked' || errorMsg.includes('popup-blocked')) {
@@ -139,6 +143,213 @@ export const SHEET_HEADERS = [
   'Berkas Foto Selfie',
   'Berkas Tanda Tangan',
 ];
+
+/**
+ * Generates TSV (Tab Separated Values) for direct clipboard paste into Google Sheets.
+ * When pasted at cell A1 in Google Sheets, it automatically arranges rows and columns.
+ */
+export const generateSheetsTsv = (visits: Visit[]): string => {
+  const cleanCell = (str: string | undefined | null) => {
+    if (!str) return '';
+    return String(str).replace(/[\t\r\n]+/g, ' ').trim();
+  };
+
+  const headerLine = SHEET_HEADERS.join('\t');
+  const rowLines = visits.map((v, i) => {
+    const row = visitToRowData(v, i);
+    return row.map(cleanCell).join('\t');
+  });
+
+  return [headerLine, ...rowLines].join('\n');
+};
+
+/**
+ * Generates properly escaped CSV for Google Sheets / Excel import with UTF-8 BOM.
+ */
+export const generateSheetsCsv = (visits: Visit[]): string => {
+  const escapeCsv = (str: string | undefined | null) => {
+    if (!str) return '""';
+    const cleanStr = String(str).replace(/"/g, '""');
+    return `"${cleanStr}"`;
+  };
+
+  const headerLine = SHEET_HEADERS.map(escapeCsv).join(',');
+  const rowLines = visits.map((v, i) => {
+    const row = visitToRowData(v, i);
+    return row.map(escapeCsv).join(',');
+  });
+
+  return '\uFEFF' + [headerLine, ...rowLines].join('\r\n');
+};
+
+/**
+ * Generates an actual XLSX binary Blob for Google Sheets and Excel with optimized column widths
+ */
+export const generateSheetsXlsx = (visits: Visit[], sheetTitle: string = 'Buku Tamu POSBAKUM'): Blob => {
+  const rows = visits.length > 0 
+    ? visits.map((v, i) => visitToRowData(v, i))
+    : [
+        [
+          1,
+          'CONTOH-001',
+          new Date().toLocaleDateString('id-ID'),
+          '09:00:00',
+          'Nama Pemohon (Contoh Baris Template)',
+          'Jl. Contoh KTP No. 1, Banjarmasin',
+          'Jl. Contoh Domisili No. 1, Banjarmasin',
+          '081234567890',
+          'pemohon@contoh.id',
+          'Wiraswasta',
+          'Perdata',
+          'Gugatan Perceraian',
+          'Selesai',
+          'Petugas Posbakum',
+          'Konsultasi hukum dan pembuatan permohonan',
+          'CONTOH-001-selfie.jpg',
+          'CONTOH-001-signature.png',
+        ]
+      ];
+
+  const data = [SHEET_HEADERS, ...rows];
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  // Set column widths suited for Posbakum guestbook fields
+  ws['!cols'] = [
+    { wch: 6 },   // No.
+    { wch: 18 },  // Nomor Kunjungan
+    { wch: 14 },  // Tanggal
+    { wch: 10 },  // Waktu
+    { wch: 32 },  // Nama Penggugat / Pemohon / Tergugat
+    { wch: 38 },  // Alamat KTP
+    { wch: 38 },  // Alamat Domisili
+    { wch: 16 },  // No. WhatsApp
+    { wch: 24 },  // Email
+    { wch: 20 },  // Pekerjaan
+    { wch: 20 },  // Kategori Perkara
+    { wch: 28 },  // Jenis Perkara
+    { wch: 16 },  // Status Layanan
+    { wch: 22 },  // Petugas
+    { wch: 35 },  // Catatan / Konsultasi
+    { wch: 24 },  // Berkas Foto Selfie
+    { wch: 24 },  // Berkas Tanda Tangan
+  ];
+
+  const validSheetName = sheetTitle.substring(0, 31).replace(/[\\/?*[\]:]/g, ' ') || 'Data Kunjungan';
+  XLSX.utils.book_append_sheet(wb, ws, validSheetName);
+
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+};
+
+/**
+ * Directly downloads the XLSX spreadsheet without requiring any Google login
+ */
+export const downloadSpreadsheetXlsx = (visits: Visit[], customFileName?: string) => {
+  const timestamp = new Date().toISOString().substring(0, 10).replace(/-/g, '');
+  const cleanName = customFileName
+    ? `${customFileName.replace(/\.(xlsx|csv)$/i, '')}.xlsx`
+    : `Rekap_GoogleSheets_Posbakum_${timestamp}.xlsx`;
+
+  const rows = visits.length > 0 
+    ? visits.map((v, i) => visitToRowData(v, i))
+    : [
+        [
+          1,
+          'CONTOH-001',
+          new Date().toLocaleDateString('id-ID'),
+          '09:00:00',
+          'Nama Pemohon (Contoh Template)',
+          'Jl. Contoh KTP No. 1, Banjarmasin',
+          'Jl. Contoh Domisili No. 1, Banjarmasin',
+          '081234567890',
+          'pemohon@contoh.id',
+          'Wiraswasta',
+          'Perdata',
+          'Gugatan Perceraian',
+          'Selesai',
+          'Petugas Posbakum',
+          'Konsultasi hukum dan pembuatan permohonan',
+          'CONTOH-001-selfie.jpg',
+          'CONTOH-001-signature.png',
+        ]
+      ];
+
+  const data = [SHEET_HEADERS, ...rows];
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  ws['!cols'] = [
+    { wch: 6 },   // No.
+    { wch: 18 },  // Nomor Kunjungan
+    { wch: 14 },  // Tanggal
+    { wch: 10 },  // Waktu
+    { wch: 32 },  // Nama Penggugat / Pemohon / Tergugat
+    { wch: 38 },  // Alamat KTP
+    { wch: 38 },  // Alamat Domisili
+    { wch: 16 },  // No. WhatsApp
+    { wch: 24 },  // Email
+    { wch: 20 },  // Pekerjaan
+    { wch: 20 },  // Kategori Perkara
+    { wch: 28 },  // Jenis Perkara
+    { wch: 16 },  // Status Layanan
+    { wch: 22 },  // Petugas
+    { wch: 35 },  // Catatan / Konsultasi
+    { wch: 24 },  // Berkas Foto Selfie
+    { wch: 24 },  // Berkas Tanda Tangan
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Data Kunjungan');
+
+  try {
+    XLSX.writeFile(wb, cleanName);
+  } catch (err) {
+    console.warn('XLSX.writeFile encountered an issue, trying Blob anchor download:', err);
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = cleanName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (document.body.contains(a)) {
+        document.body.removeChild(a);
+      }
+      URL.revokeObjectURL(url);
+    }, 60000);
+  }
+};
+
+/**
+ * Directly downloads the CSV file for Google Sheets / Excel import
+ */
+export const downloadSheetsCsv = (visits: Visit[], customFileName?: string) => {
+  const timestamp = new Date().toISOString().substring(0, 10).replace(/-/g, '');
+  const cleanName = customFileName
+    ? `${customFileName.replace(/\.(xlsx|csv)$/i, '')}.csv`
+    : `Rekap_GoogleSheets_Posbakum_${timestamp}.csv`;
+
+  const csvContent = generateSheetsCsv(visits);
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = cleanName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (document.body.contains(a)) {
+      document.body.removeChild(a);
+    }
+    URL.revokeObjectURL(url);
+  }, 60000);
+};
 
 export interface CreatedSpreadsheetResult {
   spreadsheetId: string;

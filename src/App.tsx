@@ -225,6 +225,7 @@ export default function App() {
           onMenuChange={(menu) => setAdminMenu(menu)}
           onLogout={handleLogout}
           onOpenPublicGuestbook={() => setCurrentView('guest')}
+          onViewDetailVisit={(v) => setSelectedVisitForModal(v)}
         >
           {adminMenu === 'dashboard' && (
             <DashboardOverview

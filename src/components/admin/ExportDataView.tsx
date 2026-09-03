@@ -20,12 +20,39 @@ interface ExportDataViewProps {
 }
 
 export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
-  const [startDate, setStartDate] = useState('2026-08-01');
-  const [endDate, setEndDate] = useState('2026-08-31');
+  // Default to empty strings so all visits are included by default without date restrictions
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [selectedCaseType, setSelectedCaseType] = useState('ALL');
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [activeExportTab, setActiveExportTab] = useState<'sheets' | 'csv'>('sheets');
+
+  // Helper date presets
+  const handleSetPreset = (type: 'all' | 'today' | 'this_month' | 'this_year') => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const todayStr = `${y}-${m}-${d}`;
+
+    if (type === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (type === 'today') {
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (type === 'this_month') {
+      const firstDay = `${y}-${m}-01`;
+      const lastDayNum = new Date(y, now.getMonth() + 1, 0).getDate();
+      const lastDay = `${y}-${m}-${String(lastDayNum).padStart(2, '0')}`;
+      setStartDate(firstDay);
+      setEndDate(lastDay);
+    } else if (type === 'this_year') {
+      setStartDate(`${y}-01-01`);
+      setEndDate(`${y}-12-31`);
+    }
+  };
 
   // Flatten case types
   const allCaseTypes = useMemo(() => {
@@ -38,7 +65,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
     return list;
   }, []);
 
-  const filteredVisits异 = useMemo(() => {
+  const filteredVisits = useMemo(() => {
     return visits.filter((v) => {
       if (selectedCaseType !== 'ALL' && v.caseType !== selectedCaseType) {
         return false;
@@ -54,8 +81,6 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       return true;
     });
   }, [visits, startDate, endDate, selectedCaseType]);
-
-  const filteredVisits = filteredVisits异;
 
   const generateAndDownloadCsv = () => {
     setIsExporting(true);
@@ -80,11 +105,13 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
 
     const escapeCsv = (str: string | undefined | null) => {
       if (!str) return '""';
-      const clean技巧 = String(str).replace(/"/g, '""');
-      return `"${clean技巧}"`;
+      const cleanStr = String(str).replace(/"/g, '""');
+      return `"${cleanStr}"`;
     };
 
-    const rows = filteredVisits.map((v) => [
+    const targetList = filteredVisits.length > 0 ? filteredVisits : visits;
+
+    const rows = targetList.map((v) => [
       escapeCsv(v.visitNumber),
       escapeCsv(v.dateDisplay),
       escapeCsv(v.timeDisplay),
@@ -113,10 +140,16 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
     
     const timestamp = new Date().toISOString().substring(0, 10).replace(/-/g, '');
     link.setAttribute('href', url);
-    link.setAttribute('download', `Rekap_Posbakum_PABanjarmasin_${timestamp}.csv`);
+    link.setAttribute('download', `Rekap_Buku_Tamu_Posbakum_${timestamp}.csv`);
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    setTimeout(() => {
+      if (document.body.contains(link)) {
+        document.body.removeChild(link);
+      }
+      URL.revokeObjectURL(url);
+    }, 60000);
 
     // Audit log
     logActivity({
@@ -124,7 +157,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       userName: 'Petugas Posbakum',
       userRole: 'Petugas',
       action: 'EXPORT_CSV',
-      description: `Mengekspor ${filteredVisits.length} data kunjungan ke format CSV`,
+      description: `Mengekspor ${targetList.length} data kunjungan ke format CSV`,
       badgeColor: 'purple',
     });
 
@@ -178,11 +211,62 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
 
       {/* Filter Control Box */}
       <div className="bg-white rounded-xl p-3.5 shadow-xs border border-slate-200 space-y-3">
+        {/* Preset filter chips */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 text-xs">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+            <Filter className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Filter Cepat:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleSetPreset('all')}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                startDate === '' && endDate === ''
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              Semua Data ({visits.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('today')}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+            >
+              Hari Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('this_month')}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+            >
+              Bulan Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('this_year')}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+            >
+              Tahun Ini
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           {/* Dari Tanggal */}
           <div className="space-y-1">
-            <label className="block text-[11px] font-bold text-slate-700">
-              Dari Tanggal:
+            <label className="block text-[11px] font-bold text-slate-700 flex items-center justify-between">
+              <span>Dari Tanggal:</span>
+              {startDate && (
+                <button
+                  type="button"
+                  onClick={() => setStartDate('')}
+                  className="text-[10px] text-rose-600 hover:underline font-normal"
+                >
+                  Hapus
+                </button>
+              )}
             </label>
             <input
               type="date"
@@ -194,8 +278,17 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
 
           {/* Sampai Tanggal */}
           <div className="space-y-1">
-            <label className="block text-[11px] font-bold text-slate-700">
-              Sampai Tanggal:
+            <label className="block text-[11px] font-bold text-slate-700 flex items-center justify-between">
+              <span>Sampai Tanggal:</span>
+              {endDate && (
+                <button
+                  type="button"
+                  onClick={() => setEndDate('')}
+                  className="text-[10px] text-rose-600 hover:underline font-normal"
+                >
+                  Hapus
+                </button>
+              )}
             </label>
             <input
               type="date"
@@ -225,16 +318,28 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px]">
-          <div className="font-medium text-slate-600">
-            Ditemukan <span className="font-bold text-emerald-800 font-mono">{filteredVisits.length}</span> baris data yang memenuhi kriteria filter.
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-slate-100 text-[11px] gap-2">
+          <div className="font-medium text-slate-600 flex items-center gap-1.5">
+            <span>
+              Ditemukan <span className="font-bold text-emerald-800 font-mono">{filteredVisits.length}</span> dari{' '}
+              <span className="font-bold text-slate-700 font-mono">{visits.length}</span> total kunjungan.
+            </span>
+            {filteredVisits.length === 0 && visits.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleSetPreset('all')}
+                className="text-emerald-700 font-bold underline hover:text-emerald-900 ml-1"
+              >
+                Reset Filter (Gunakan Semua {visits.length} Data)
+              </button>
+            )}
           </div>
 
           {activeExportTab === 'csv' && (
             <button
               type="button"
               onClick={generateAndDownloadCsv}
-              disabled={filteredVisits.length === 0 || isExporting}
+              disabled={isExporting}
               className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 transition disabled:opacity-50"
             >
               {exportSuccess ? (
@@ -257,7 +362,9 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       {activeExportTab === 'sheets' && (
         <GoogleSheetsSync
           filteredVisits={filteredVisits}
+          allVisits={visits}
           allVisitsCount={visits.length}
+          onResetFilter={() => handleSetPreset('all')}
         />
       )}
 

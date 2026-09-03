@@ -1,5 +1,6 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
+import { broadcastNewVisit } from './notificationService';
 import { 
   collection, 
   doc, 
@@ -91,19 +92,32 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   try {
     const visitsCol = collection(db, 'visits');
     const q = query(visitsCol, orderBy('createdAt', 'desc'));
+    let knownVisitIds: Set<string> | null = null;
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
         const list: Visit[] = [];
+        const isSubsequentUpdate = knownVisitIds !== null;
+        const currentIds = new Set<string>();
+
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Visit;
-          list.push({
+          const visitItem: Visit = {
             ...data,
             id: data.id || docSnap.id,
-          });
+          };
+          list.push(visitItem);
+          currentIds.add(visitItem.id);
+
+          // If this is a subsequent real-time update from Firestore, detect brand new arrivals
+          if (isSubsequentUpdate && knownVisitIds && !knownVisitIds.has(visitItem.id)) {
+            broadcastNewVisit(visitItem);
+          }
         });
         
+        knownVisitIds = currentIds;
+
         // Sort descending by visitedAt/createdAt
         list.sort((a, b) => new Date(b.createdAt || b.visitedAt).getTime() - new Date(a.createdAt || a.visitedAt).getTime());
 
@@ -193,6 +207,9 @@ export const saveVisit = async (
     userId: 'public-guest',
     badgeColor: 'blue',
   });
+
+  // 4. Real-time notification trigger for admin dashboard & other open tabs
+  broadcastNewVisit(visitRecord);
 
   return visitRecord;
 };
