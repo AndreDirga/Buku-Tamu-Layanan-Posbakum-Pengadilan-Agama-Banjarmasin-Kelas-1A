@@ -21,18 +21,24 @@ import {
   Bell,
   Volume2,
   VolumeX,
-  Sparkles,
   Eye,
   CheckCircle2,
-  Clock
+  Clock,
+  Trash2,
+  CalendarDays
 } from 'lucide-react';
 import { Visit } from '../../types/posbakum';
 import { 
   subscribeToNewVisits, 
-  broadcastNewVisit, 
   playNotificationChime, 
   getNotificationSoundEnabled, 
-  setNotificationSoundEnabled 
+  setNotificationSoundEnabled,
+  getDailyNotifications,
+  addVisitToDailyNotifications,
+  deleteSingleDailyNotification,
+  clearAllDailyNotifications,
+  getTodayDateLabel,
+  getTodayDateKey
 } from '../../services/notificationService';
 import { NewVisitNotificationPopup } from './NewVisitNotificationPopup';
 
@@ -59,18 +65,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
 
-  // Notification popup & queue states
+  // Notification popup & queue states with daily history
   const [notificationQueue, setNotificationQueue] = useState<Visit[]>([]);
   const [currentPopupVisit, setCurrentPopupVisit] = useState<Visit | null>(null);
-  const [notificationHistory, setNotificationHistory] = useState<Visit[]>([]);
+  const [notificationHistory, setNotificationHistory] = useState<Visit[]>(() => getDailyNotifications());
+  const [activeDateKey, setActiveDateKey] = useState<string>(() => getTodayDateKey());
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(getNotificationSoundEnabled());
 
   // Listen to incoming visits in real-time (cross-tab, Firestore, and same-window)
   useEffect(() => {
     const unsubscribe = subscribeToNewVisits((newVisit) => {
-      // Add to history list
-      setNotificationHistory((prev) => [newVisit, ...prev.filter((v) => v.id !== newVisit.id)].slice(0, 25));
+      // Add to daily persistent history (auto-resets if new day)
+      const updatedList = addVisitToDailyNotifications(newVisit);
+      setNotificationHistory(updatedList);
+      setActiveDateKey(getTodayDateKey());
       setUnreadCount((prev) => prev + 1);
 
       // Add to popup queue
@@ -84,6 +93,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
     return unsubscribe;
   }, [currentPopupVisit]);
+
+  // Periodic check to auto-reset when date rolls over to next day
+  useEffect(() => {
+    const checkDateChange = () => {
+      const today = getTodayDateKey();
+      if (today !== activeDateKey) {
+        setActiveDateKey(today);
+        setNotificationHistory(getDailyNotifications());
+        setUnreadCount(0);
+      }
+    };
+
+    const interval = setInterval(checkDateChange, 30000);
+    return () => clearInterval(interval);
+  }, [activeDateKey]);
 
   // Process queue into current popup
   useEffect(() => {
@@ -107,41 +131,34 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     }
   };
 
-  const handleClearNotifications = () => {
-    setUnreadCount(0);
+  // Refresh daily notifications when opening panel
+  const handleOpenNotificationsDropdown = () => {
+    const nextOpen = !showNotificationsDropdown;
+    setShowNotificationsDropdown(nextOpen);
+    if (nextOpen) {
+      // Verify date and reload daily history
+      const today = getTodayDateKey();
+      if (today !== activeDateKey) {
+        setActiveDateKey(today);
+      }
+      setNotificationHistory(getDailyNotifications());
+      setUnreadCount(0);
+    }
   };
 
-  // Test notification helper for admin to verify
-  const handleTriggerTestNotification = () => {
-    const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    
-    const sampleVisit: Visit = {
-      id: `simulasi-${Date.now()}`,
-      visitNumber: `KJG-${dateStr}-SIMULASI`,
-      visitedAt: now.toISOString(),
-      dateDisplay: 'Hari Ini',
-      timeDisplay: `${hours}:${minutes} WITA`,
-      name: 'Hj. Siti Aisyah, S.Pd.',
-      ktpAddress: 'Jl. Ahmad Yani Km. 4.5 No. 18, RT 012/RW 003, Banjarmasin Timur',
-      domicileAddress: 'Jl. Ahmad Yani Km. 4.5 No. 18, RT 012/RW 003, Banjarmasin Timur',
-      domicileSameAsKtp: true,
-      email: 'sitiaisyah@gmail.com',
-      whatsapp: '081255551234',
-      occupation: 'Guru / Tenaga Pendidik',
-      caseCategory: 'Perdata Gugatan',
-      caseType: 'Gugatan Perceraian (Cerai Gugat)',
-      selfieUrl: '',
-      selfieFileName: '',
-      signatureUrl: '',
-      signatureFileName: '',
-      status: 'Menunggu',
-      createdAt: now.toISOString(),
-    };
+  // Manually delete single notification from history
+  const handleDeleteNotification = (e: React.MouseEvent, visitId: string) => {
+    e.stopPropagation();
+    const updated = deleteSingleDailyNotification(visitId);
+    setNotificationHistory(updated);
+  };
 
-    broadcastNewVisit(sampleVisit);
+  // Manually clear all notifications for today
+  const handleClearAllDailyNotifications = () => {
+    if (notificationHistory.length === 0) return;
+    const updated = clearAllDailyNotifications();
+    setNotificationHistory(updated);
+    setUnreadCount(0);
   };
 
   const menuItems = [
@@ -221,18 +238,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               <button
                 type="button"
                 id="btn-admin-notifications-bell"
-                onClick={() => {
-                  setShowNotificationsDropdown(!showNotificationsDropdown);
-                  if (!showNotificationsDropdown) {
-                    setUnreadCount(0);
-                  }
-                }}
+                onClick={handleOpenNotificationsDropdown}
                 className={`relative p-2 rounded-lg border transition ${
                   unreadCount > 0 
                     ? 'bg-emerald-950/70 border-emerald-500/80 text-emerald-300 ring-2 ring-emerald-500/30 shadow-xs' 
                     : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
-                title="Pemberitahuan Kunjungan Buku Tamu"
+                title="Pemberitahuan Kunjungan Buku Tamu Hari Ini"
               >
                 <Bell className={`w-4 h-4 ${unreadCount > 0 ? 'animate-bounce text-emerald-300' : ''}`} />
                 {unreadCount > 0 && (
@@ -251,7 +263,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                       <Bell className="w-4 h-4 text-emerald-400" />
                       <div>
                         <div className="font-bold text-xs">Pemberitahuan Buku Tamu</div>
-                        <div className="text-[10px] text-slate-300">Notifikasi otomatis saat form tamu diisi</div>
+                        <div className="text-[10px] text-slate-300 flex items-center gap-1">
+                          <CalendarDays className="w-2.5 h-2.5 text-emerald-400" />
+                          <span>{getTodayDateLabel()}</span>
+                        </div>
                       </div>
                     </div>
 
@@ -268,31 +283,34 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                         type="button"
                         onClick={() => setShowNotificationsDropdown(false)}
                         className="p-1 text-slate-400 hover:text-white rounded-lg transition"
+                        title="Tutup menu pemberitahuan"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Actions bar */}
+                  {/* Daily Header / Actions bar */}
                   <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={handleTriggerTestNotification}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-lg text-[10px] font-bold transition cursor-pointer"
-                      title="Uji coba efek pop-up pemberitahuan langsung"
-                    >
-                      <Sparkles className="w-3 h-3 text-emerald-700" />
-                      <span>Tes Pop-up Notifikasi</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-300">
+                        <Clock className="w-2.5 h-2.5 text-emerald-700" />
+                        <span>Riwayat Hari Ini</span>
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-semibold">
+                        ({notificationHistory.length} Tamu)
+                      </span>
+                    </div>
 
                     {notificationHistory.length > 0 && (
                       <button
                         type="button"
-                        onClick={handleClearNotifications}
-                        className="text-[10px] text-slate-500 hover:text-slate-800 font-semibold underline"
+                        onClick={handleClearAllDailyNotifications}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg text-[10px] font-bold transition border border-rose-200"
+                        title="Hapus seluruh riwayat notifikasi hari ini"
                       >
-                        Tandai Dibaca
+                        <Trash2 className="w-3 h-3 text-rose-500" />
+                        <span>Hapus Semua</span>
                       </button>
                     )}
                   </div>
@@ -304,24 +322,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                         <div className="w-10 h-10 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
                           <Bell className="w-5 h-5" />
                         </div>
-                        <p className="text-xs font-semibold text-slate-700">Belum ada pengisian baru</p>
-                        <p className="text-[10px] text-slate-400 max-w-[240px] mx-auto">
-                          Ketika masyarakat mengisi form di buku tamu publik, data akan langsung terekam dan memunculkan pop-up pemberitahuan di sini.
+                        <p className="text-xs font-bold text-slate-700">Belum Ada Pengisian Hari Ini</p>
+                        <p className="text-[10px] text-slate-400 max-w-[240px] mx-auto leading-relaxed">
+                          Riwayat notifikasi otomatis direset setiap berganti hari/tanggal. Saat masyarakat mengisi buku tamu publik hari ini, notifikasi 10 detik akan muncul dan dicatat di sini.
                         </p>
-                        <button
-                          type="button"
-                          onClick={handleTriggerTestNotification}
-                          className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-800 transition"
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          <span>Coba Simulasi Tamu Masuk</span>
-                        </button>
                       </div>
                     ) : (
                       notificationHistory.map((visit) => (
                         <div 
                           key={visit.id}
-                          className="p-3 hover:bg-slate-50/80 transition flex items-start justify-between gap-2.5"
+                          className="p-3 hover:bg-slate-50/80 transition flex items-start justify-between gap-2.5 group"
                         >
                           <div className="flex items-start gap-2.5 min-w-0">
                             {visit.selfieUrl ? (
@@ -344,7 +354,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                                 </span>
                                 <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
                                   <Clock className="w-2.5 h-2.5" />
-                                  <span>{visit.timeDisplay || 'Baru saja'}</span>
+                                  <span>{visit.timeDisplay || 'Hari ini'}</span>
                                 </span>
                               </div>
 
@@ -358,19 +368,29 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                             </div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowNotificationsDropdown(false);
-                              if (onViewDetailVisit) {
-                                onViewDetailVisit(visit);
-                              }
-                            }}
-                            className="shrink-0 p-1.5 text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg transition"
-                            title="Buka Detail Kunjungan"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNotificationsDropdown(false);
+                                if (onViewDetailVisit) {
+                                  onViewDetailVisit(visit);
+                                }
+                              }}
+                              className="p-1.5 text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg transition"
+                              title="Buka Detail Kunjungan"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteNotification(e, visit.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                              title="Hapus notifikasi ini dari riwayat hari ini"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       ))
                     )}
@@ -378,7 +398,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
                   {/* Panel Footer */}
                   {notificationHistory.length > 0 && (
-                    <div className="p-2 bg-slate-50 border-t border-slate-100 text-center">
+                    <div className="p-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between px-3">
+                      <span className="text-[10px] text-slate-400">
+                        Data kunjungan tetap tersimpan di database
+                      </span>
                       <button
                         type="button"
                         onClick={() => {
@@ -387,7 +410,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                         }}
                         className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900"
                       >
-                        Buka Semua Data Kunjungan &rarr;
+                        Semua Kunjungan &rarr;
                       </button>
                     </div>
                   )}

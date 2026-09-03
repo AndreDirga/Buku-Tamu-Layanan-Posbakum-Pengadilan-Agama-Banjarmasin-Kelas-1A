@@ -12,11 +12,8 @@ import {
   Scale, 
   BarChart3, 
   PieChart as PieIcon,
-  RotateCcw,
-  Bell,
-  Sparkles
+  RotateCcw
 } from 'lucide-react';
-import { broadcastNewVisit } from '../../services/notificationService';
 import { ResetStatsModal } from './ResetStatsModal';
 
 interface DashboardOverviewProps {
@@ -155,42 +152,6 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
         {/* Action Shortcuts */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => {
-              const now = new Date();
-              const hours = String(now.getHours()).padStart(2, '0');
-              const minutes = String(now.getMinutes()).padStart(2, '0');
-              const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-              broadcastNewVisit({
-                id: `simulasi-${Date.now()}`,
-                visitNumber: `KJG-${dateStr}-TEST`,
-                visitedAt: now.toISOString(),
-                dateDisplay: 'Hari Ini',
-                timeDisplay: `${hours}:${minutes} WITA`,
-                name: 'Hj. Siti Aisyah, S.Pd.',
-                ktpAddress: 'Jl. Ahmad Yani Km. 4.5 No. 18, Banjarmasin Timur',
-                domicileAddress: 'Jl. Ahmad Yani Km. 4.5 No. 18, Banjarmasin Timur',
-                domicileSameAsKtp: true,
-                email: 'sitiaisyah@gmail.com',
-                whatsapp: '081255551234',
-                occupation: 'Guru / Tenaga Pendidik',
-                caseCategory: 'Perdata Gugatan',
-                caseType: 'Gugatan Perceraian (Cerai Gugat)',
-                selfieUrl: '',
-                selfieFileName: '',
-                signatureUrl: '',
-                signatureFileName: '',
-                status: 'Menunggu',
-                createdAt: now.toISOString(),
-              });
-            }}
-            className="px-2.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-semibold rounded-xl border border-emerald-700/80 flex items-center gap-1.5 transition shadow-xs"
-            title="Uji coba pop-up notifikasi tamu"
-          >
-            <Bell className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Tes Pop-up</span>
-          </button>
           <button
             type="button"
             onClick={() => setShowResetModal(true)}

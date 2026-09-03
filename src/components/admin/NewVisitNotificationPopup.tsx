@@ -44,7 +44,7 @@ export const NewVisitNotificationPopup: React.FC<NewVisitNotificationPopupProps>
   const timerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
 
-  const AUTO_DISMISS_SECONDS = 12;
+  const AUTO_DISMISS_SECONDS = 10;
 
   // Sound and countdown timer whenever currentNotification changes
   useEffect(() => {
@@ -261,7 +261,7 @@ export const NewVisitNotificationPopup: React.FC<NewVisitNotificationPopupProps>
 
         {/* Hover Pause Hint */}
         <div className="bg-slate-50 border-t border-slate-100 px-3 py-1 text-[10px] text-slate-400 text-center">
-          {isHovered ? 'Timer ditahan (sedang disorot)' : 'Akan tertutup otomatis dalam beberapa detik'}
+          {isHovered ? 'Timer ditahan (sedang disorot)' : 'Akan tertutup otomatis dalam 10 detik'}
         </div>
       </div>
     </div>
