@@ -197,10 +197,10 @@ export default function App() {
           {/* Footer */}
           <footer className="border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500 space-y-1">
             <div className="font-bold text-slate-700">
-              Pengadilan Agama Banjarmasin Kelas 1A • Pos Bantuan Hukum (POSBAKUM)
+              POS BANTUAN HUKUM (POSBAKUM)
             </div>
             <div className="text-[11px] text-slate-400">
-              Jl. Gatot Subroto No. 8, Banjarmasin 70235, Kalimantan Selatan
+              Sistem Informasi & Buku Tamu Digital Layanan Bantuan Hukum
             </div>
           </footer>
         </div>

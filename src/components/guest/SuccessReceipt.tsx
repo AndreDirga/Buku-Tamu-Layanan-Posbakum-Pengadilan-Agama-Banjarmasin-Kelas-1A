@@ -181,7 +181,7 @@ export const SuccessReceipt: React.FC<SuccessReceiptProps> = ({
               Petunjuk Pengunjung:
             </div>
             <p className="text-[10px] text-amber-800 leading-normal">
-              Tunjukkan Nomor Kunjungan ini kepada Petugas Posbakum atau ambil nomor antrian layanan di loket PTSP Pengadilan Agama Banjarmasin Kelas 1A.
+              Tunjukkan Nomor Kunjungan ini kepada Petugas Posbakum untuk mendapatkan layanan bantuan hukum.
             </p>
           </div>
         </div>

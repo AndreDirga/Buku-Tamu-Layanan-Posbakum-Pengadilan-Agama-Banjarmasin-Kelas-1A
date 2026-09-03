@@ -98,7 +98,7 @@ export const ResetStatsModal: React.FC<ResetStatsModalProps> = ({
                 RESET MANUAL STATISTIK & DATA KUNJUNGAN
               </h3>
               <p className="text-[10px] text-slate-400">
-                Pengadilan Agama Banjarmasin • Otoritas Petugas / Admin
+                POS BANTUAN HUKUM (POSBAKUM) • Otoritas Petugas / Admin
               </p>
             </div>
           </div>

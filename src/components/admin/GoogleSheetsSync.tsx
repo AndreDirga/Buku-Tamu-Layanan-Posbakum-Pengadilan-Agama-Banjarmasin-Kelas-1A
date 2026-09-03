@@ -43,7 +43,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
   
   // Sync Mode: 'create_new' | 'append_existing'
   const [syncMode, setSyncMode] = useState<'create_new' | 'append_existing'>('create_new');
-  const [spreadsheetTitle, setSpreadsheetTitle] = useState(`Rekap Buku Tamu Posbakum PA Banjarmasin - ${new Date().toLocaleDateString('id-ID')}`);
+  const [spreadsheetTitle, setSpreadsheetTitle] = useState(`Rekap Buku Tamu Pos Bantuan Hukum (POSBAKUM) - ${new Date().toLocaleDateString('id-ID')}`);
   
   // Existing spreadsheet state
   const [existingSheetInput, setExistingSheetInput] = useState('');
@@ -80,9 +80,21 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         });
         setIsConnected(true);
       }
+      // If result is null, user simply closed or cancelled the popup - no error needed
     } catch (err: any) {
-      console.error('Google Sign In Error:', err);
-      setErrorMsg(err.message || 'Gagal menghubungkan ke akun Google.');
+      const msg = err?.message || '';
+      const code = err?.code || '';
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request' ||
+        msg.includes('popup-closed-by-user') ||
+        msg.includes('cancelled-popup-request')
+      ) {
+        // Benign cancellation by user
+        return;
+      }
+      console.warn('Google Sign In Warning:', msg);
+      setErrorMsg(msg || 'Gagal menghubungkan ke akun Google.');
     } finally {
       setIsLoading(false);
     }
@@ -283,7 +295,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
             Hubungkan Akun Google untuk Mengaktifkan Ekspor Spreadsheet
           </h4>
           <p className="text-[11px] text-slate-500 max-w-md mx-auto">
-            Dengan menghubungkan akun Google Anda, aplikasi dapat membuat spreadsheet baru secara otomatis dengan penataan kolom siap pakai serta styling resmi Pengadilan Agama Banjarmasin.
+            Dengan menghubungkan akun Google Anda, aplikasi dapat membuat spreadsheet baru secara otomatis dengan penataan kolom siap pakai serta styling resmi Pos Bantuan Hukum (POSBAKUM).
           </p>
           <button
             type="button"

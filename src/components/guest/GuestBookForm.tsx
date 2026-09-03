@@ -523,7 +523,7 @@ export const GuestBookForm: React.FC<GuestBookFormProps> = ({
                 className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-400 border-white/40 mt-0.5 cursor-pointer"
               />
               <span className="text-[11px] font-medium text-slate-300 leading-relaxed">
-                Saya menyatakan bahwa data yang diisi adalah benar, akurat, dan dapat digunakan untuk keperluan pencatatan administrasi Posbakum Pengadilan Agama Banjarmasin Kelas 1A.
+                Saya menyatakan bahwa data yang diisi adalah benar, akurat, dan dapat digunakan untuk keperluan pencatatan administrasi Pos Bantuan Hukum (POSBAKUM).
               </span>
             </label>
 
@@ -546,7 +546,7 @@ export const GuestBookForm: React.FC<GuestBookFormProps> = ({
             </button>
 
             <div className="text-center text-[10px] text-slate-400">
-              Data terlindungi oleh sistem administrasi Pengadilan Agama Banjarmasin.
+              Data terlindungi oleh sistem administrasi Pos Bantuan Hukum (POSBAKUM).
             </div>
           </div>
         </form>

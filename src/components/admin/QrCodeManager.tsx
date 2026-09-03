@@ -184,11 +184,11 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
               <h3 className="text-base font-black text-slate-900 mt-1">
                 POS BANTUAN HUKUM (POSBAKUM)
               </h3>
-              <p className="text-[11px] text-slate-500 font-medium">
-                {useOfficialQr 
-                  ? 'Loket Pelayanan Terpadu Satu Pintu (PTSP) & Meja Posbakum' 
-                  : (selectedToken ? selectedToken.name : 'Meja Layanan Pos Bantuan Hukum')}
-              </p>
+              {!useOfficialQr && selectedToken && (
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {selectedToken.name}
+                </p>
+              )}
             </div>
 
             {/* Big QR Code Display */}

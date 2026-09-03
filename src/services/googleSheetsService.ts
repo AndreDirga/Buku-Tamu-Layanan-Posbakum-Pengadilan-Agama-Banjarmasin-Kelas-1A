@@ -54,7 +54,30 @@ export const signInWithGoogleSheets = async (): Promise<{ user: User; accessToke
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.error('Sign in Google error:', error);
+    // Gracefully handle user-initiated cancellation (closing the popup window)
+    const errorCode = error?.code || '';
+    const errorMsg = error?.message || '';
+    
+    if (
+      errorCode === 'auth/popup-closed-by-user' ||
+      errorCode === 'auth/cancelled-popup-request' ||
+      errorMsg.includes('popup-closed-by-user') ||
+      errorMsg.includes('cancelled-popup-request')
+    ) {
+      // User dismissed or closed the login popup intentionally
+      return null;
+    }
+
+    if (errorCode === 'auth/popup-blocked' || errorMsg.includes('popup-blocked')) {
+      throw new Error('Jendela popup diblokir oleh browser. Harap izinkan jendela popup di browser Anda atau buka aplikasi di tab baru untuk melanjutkan.');
+    }
+
+    if (errorCode === 'auth/network-request-failed' || errorMsg.includes('network-request-failed')) {
+      throw new Error('Koneksi internet bermasalah. Harap periksa jaringan Anda lalu coba kembali.');
+    }
+
+    // Only log unexpected actual errors
+    console.warn('Google authentication interrupted:', errorMsg);
     throw error;
   } finally {
     isSigningIn = false;
