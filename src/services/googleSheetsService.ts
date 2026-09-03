@@ -10,10 +10,7 @@ import { Visit } from '../types/posbakum';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/drive',
 ];
 
 const provider = new GoogleAuthProvider();
@@ -66,6 +63,13 @@ export const signInWithGoogleSheets = async (): Promise<{ user: User; accessToke
     ) {
       // User dismissed or closed the login popup intentionally
       return null;
+    }
+
+    if (errorCode === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'domain ini';
+      throw new Error(
+        `Domain ${currentHost} belum terdaftar di Authorized Domains Firebase Authentication. Mohon setujui konfigurasi integrasi Google Workspace yang muncul, atau gunakan tombol Ekspor CSV/Excel di bawah.`
+      );
     }
 
     if (errorCode === 'auth/popup-blocked' || errorMsg.includes('popup-blocked')) {

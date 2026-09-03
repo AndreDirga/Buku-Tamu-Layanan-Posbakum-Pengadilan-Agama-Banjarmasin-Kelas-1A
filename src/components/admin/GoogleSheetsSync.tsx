@@ -257,9 +257,22 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
 
       {/* Error Notice */}
       {errorMsg && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs p-3 rounded-xl flex items-start gap-2">
+        <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs p-3.5 rounded-xl flex items-start gap-2.5">
           <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1 font-medium">{errorMsg}</div>
+          <div className="flex-1 space-y-1">
+            <div className="font-semibold text-rose-900">{errorMsg}</div>
+            <div className="text-[11px] text-rose-700/90 leading-relaxed">
+              Catatan: Pastikan Anda membuka aplikasi ini langsung pada peramban utama (bukan di dalam pratinjau yang terblokir) atau gunakan tombol <strong>Unduh Berkas CSV</strong> untuk ekspor langsung tanpa login Google.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMsg(null)}
+            className="text-rose-400 hover:text-rose-700 p-0.5"
+            title="Tutup pesan"
+          >
+            &times;
+          </button>
         </div>
       )}
 
