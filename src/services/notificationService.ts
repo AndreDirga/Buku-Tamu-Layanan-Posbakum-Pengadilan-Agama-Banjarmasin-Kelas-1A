@@ -32,72 +32,165 @@ interface DailyNotificationStore {
   dateKey: string;
   dateLabel: string;
   visits: Visit[];
+  readVisitIds: string[];
 }
 
-// Load notification history for today. If it's a new day/different date, auto-resets!
-export const getDailyNotifications = (): Visit[] => {
-  if (typeof window === 'undefined') return [];
+export const getDailyNotificationStore = (): DailyNotificationStore => {
+  if (typeof window === 'undefined') {
+    return {
+      dateKey: getTodayDateKey(),
+      dateLabel: getTodayDateLabel(),
+      visits: [],
+      readVisitIds: [],
+    };
+  }
   try {
     const raw = localStorage.getItem(DAILY_NOTIFICATIONS_KEY);
     const todayKey = getTodayDateKey();
     if (!raw) {
-      return [];
+      return {
+        dateKey: todayKey,
+        dateLabel: getTodayDateLabel(),
+        visits: [],
+        readVisitIds: [],
+      };
     }
-    const store: DailyNotificationStore = JSON.parse(raw);
+    const store = JSON.parse(raw);
     // If the stored date is different from today, reset the history automatically
-    if (store.dateKey !== todayKey) {
+    if (!store || store.dateKey !== todayKey) {
       const resetStore: DailyNotificationStore = {
         dateKey: todayKey,
         dateLabel: getTodayDateLabel(),
         visits: [],
+        readVisitIds: [],
       };
       localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(resetStore));
-      return [];
+      return resetStore;
     }
-    return Array.isArray(store.visits) ? store.visits : [];
+    return {
+      dateKey: todayKey,
+      dateLabel: store.dateLabel || getTodayDateLabel(),
+      visits: Array.isArray(store.visits) ? store.visits : [],
+      readVisitIds: Array.isArray(store.readVisitIds) ? store.readVisitIds : [],
+    };
   } catch (e) {
-    return [];
+    return {
+      dateKey: getTodayDateKey(),
+      dateLabel: getTodayDateLabel(),
+      visits: [],
+      readVisitIds: [],
+    };
   }
+};
+
+export const saveDailyNotificationStore = (store: DailyNotificationStore): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(store));
+  } catch (e) {
+    console.warn('Failed to save daily notifications store:', e);
+  }
+};
+
+// Load notification history for today. If it's a new day/different date, auto-resets!
+export const getDailyNotifications = (): Visit[] => {
+  return getDailyNotificationStore().visits;
+};
+
+// Get list of read visit IDs for today
+export const getDailyReadVisitIds = (): string[] => {
+  return getDailyNotificationStore().readVisitIds;
+};
+
+// Calculate count of unread notifications for today
+export const getDailyUnreadCount = (): number => {
+  const store = getDailyNotificationStore();
+  return store.visits.filter((v) => !store.readVisitIds.includes(v.id)).length;
 };
 
 // Save notification list for today
 export const saveDailyNotifications = (visits: Visit[]): void => {
-  if (typeof window === 'undefined') return;
-  try {
-    const todayKey = getTodayDateKey();
-    const store: DailyNotificationStore = {
-      dateKey: todayKey,
-      dateLabel: getTodayDateLabel(),
-      visits,
-    };
-    localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(store));
-  } catch (e) {
-    console.warn('Failed to save daily notifications:', e);
-  }
+  const current = getDailyNotificationStore();
+  saveDailyNotificationStore({
+    ...current,
+    visits,
+  });
 };
 
-// Add new visit to today's notification history
-export const addVisitToDailyNotifications = (visit: Visit): Visit[] => {
-  const current = getDailyNotifications();
+// Add new visit to today's notification history (new visit starts as unread)
+export const addVisitToDailyNotifications = (visit: Visit): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
   // Avoid duplicates
-  const filtered = current.filter((v) => v.id !== visit.id);
-  const updated = [visit, ...filtered].slice(0, 100);
-  saveDailyNotifications(updated);
-  return updated;
+  const filteredVisits = current.visits.filter((v) => v.id !== visit.id);
+  const updatedVisits = [visit, ...filteredVisits].slice(0, 100);
+  // Ensure the new visit is NOT in readVisitIds so it counts as unread
+  const updatedReadIds = current.readVisitIds.filter((id) => id !== visit.id);
+  
+  const newStore: DailyNotificationStore = {
+    ...current,
+    visits: updatedVisits,
+    readVisitIds: updatedReadIds,
+  };
+  saveDailyNotificationStore(newStore);
+
+  const unreadCount = updatedVisits.filter((v) => !updatedReadIds.includes(v.id)).length;
+  return { visits: updatedVisits, readVisitIds: updatedReadIds, unreadCount };
+};
+
+// Mark a specific notification as opened/read
+export const markDailyNotificationAsRead = (visitId: string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  if (!current.readVisitIds.includes(visitId)) {
+    const updatedReadIds = [...current.readVisitIds, visitId];
+    const newStore: DailyNotificationStore = {
+      ...current,
+      readVisitIds: updatedReadIds,
+    };
+    saveDailyNotificationStore(newStore);
+    const unreadCount = current.visits.filter((v) => !updatedReadIds.includes(v.id)).length;
+    return { visits: current.visits, readVisitIds: updatedReadIds, unreadCount };
+  }
+  const unreadCount = current.visits.filter((v) => !current.readVisitIds.includes(v.id)).length;
+  return { visits: current.visits, readVisitIds: current.readVisitIds, unreadCount };
+};
+
+// Mark all daily notifications as opened/read
+export const markAllDailyNotificationsAsRead = (): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  const allIds = current.visits.map((v) => v.id);
+  const newStore: DailyNotificationStore = {
+    ...current,
+    readVisitIds: allIds,
+  };
+  saveDailyNotificationStore(newStore);
+  return { visits: current.visits, readVisitIds: allIds, unreadCount: 0 };
 };
 
 // Remove single notification by ID
-export const deleteSingleDailyNotification = (visitId: string): Visit[] => {
-  const current = getDailyNotifications();
-  const updated = current.filter((v) => v.id !== visitId);
-  saveDailyNotifications(updated);
-  return updated;
+export const deleteSingleDailyNotification = (visitId: string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  const updatedVisits = current.visits.filter((v) => v.id !== visitId);
+  const updatedReadIds = current.readVisitIds.filter((id) => id !== visitId);
+  const newStore: DailyNotificationStore = {
+    ...current,
+    visits: updatedVisits,
+    readVisitIds: updatedReadIds,
+  };
+  saveDailyNotificationStore(newStore);
+  const unreadCount = updatedVisits.filter((v) => !updatedReadIds.includes(v.id)).length;
+  return { visits: updatedVisits, readVisitIds: updatedReadIds, unreadCount };
 };
 
 // Clear all notifications for today
-export const clearAllDailyNotifications = (): Visit[] => {
-  saveDailyNotifications([]);
-  return [];
+export const clearAllDailyNotifications = (): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const resetStore: DailyNotificationStore = {
+    dateKey: getTodayDateKey(),
+    dateLabel: getTodayDateLabel(),
+    visits: [],
+    readVisitIds: [],
+  };
+  saveDailyNotificationStore(resetStore);
+  return { visits: [], readVisitIds: [], unreadCount: 0 };
 };
 
 // Play a pleasant, professional two-tone chime for incoming guest registration

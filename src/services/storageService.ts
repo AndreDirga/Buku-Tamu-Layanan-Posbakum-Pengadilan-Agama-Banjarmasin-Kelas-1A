@@ -25,7 +25,7 @@ export const INITIAL_OFFICER: OfficerUser = {
   name: 'Admin',
   username: 'posbakumbjm',
   role: 'Petugas Posbakum',
-  nip: '19880512 201403 1 002',
+  nip: '',
   avatarUrl: '',
 };
 
@@ -624,7 +624,12 @@ export const getAuthenticatedOfficer = (): OfficerUser | null => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_AUTH);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.nip === '19880512 201403 1 002' || !parsed.nip)) {
+      parsed.nip = '';
+      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(parsed));
+    }
+    return parsed;
   } catch {
     return null;
   }

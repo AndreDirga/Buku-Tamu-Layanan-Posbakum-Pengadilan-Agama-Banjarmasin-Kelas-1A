@@ -15,10 +15,7 @@ import {
   Plus, 
   CheckCircle2, 
   XCircle, 
-  Copy, 
-  ExternalLink, 
   Sparkles, 
-  Check, 
   Layers,
   Download,
   ShieldCheck
@@ -36,7 +33,6 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
   const [newDeskName, setNewDeskName] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const loaded = getStoredQrTokens();
@@ -109,12 +105,6 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
       const fresh = updated.find((t) => t.id === id);
       if (fresh) setSelectedToken(fresh);
     }
-  };
-
-  const handleCopyUrl = () => {
-    navigator.clipboard.writeText(targetUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownloadQr = () => {
@@ -212,35 +202,6 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
               <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
                 Buka aplikasi kamera atau QR Scanner di HP Anda dan arahkan ke kode QR di atas untuk membuka formulir pendaftaran Posbakum.
               </p>
-            </div>
-
-            {/* QR Metadata Footer */}
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-left text-xs">
-              <div className="truncate pr-2">
-                <div className="text-[9px] font-bold uppercase text-slate-400">Target URL Buku Tamu:</div>
-                <div className="font-mono text-emerald-800 truncate font-semibold text-[11px]">
-                  {targetUrl}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleCopyUrl}
-                  className="p-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 transition"
-                  title="Salin URL"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenGuestWithToken(useOfficialQr ? undefined : selectedToken?.token)}
-                  className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-800 transition"
-                  title="Buka Form Pengunjung"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </button>
-              </div>
             </div>
           </div>
         </div>
