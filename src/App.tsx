@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Visit, OfficerUser } from './types/posbakum';
 import { 
   getStoredVisits, 
+  fetchVisits,
   subscribeToVisits,
   getAuthenticatedOfficer, 
   setAuthenticatedOfficer,
@@ -47,20 +48,41 @@ export default function App() {
 
   // Visits in state
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Token from URL parameter if any
   const [activeQrToken, setActiveQrToken] = useState<string | undefined>(undefined);
 
-  // Initial load & Firestore real-time sync
+  // Initial load & Firestore real-time sync with robust fallback & direct fetch
   useEffect(() => {
-    // 1. Initial cached visits
+    // 1. Initial cached visits for zero-delay UI rendering
     const loadedVisits = getStoredVisits();
     setVisits(loadedVisits);
 
-    // 2. Real-time Cloud Firestore subscription
+    // 2. Direct fetch from Cloud Firestore to guarantee no records are missed
+    fetchVisits()
+      .then((fresh) => {
+        if (fresh && fresh.length > 0) {
+          setVisits(fresh);
+        }
+      })
+      .catch((err) => console.warn('Initial direct fetch warning:', err));
+
+    // 3. Real-time Cloud Firestore subscription
     const unsubscribe = subscribeToVisits((cloudVisits) => {
       setVisits(cloudVisits);
     });
+
+    // 4. Background polling sync every 25 seconds in case WebSocket drops or tab was inactive
+    const pollInterval = setInterval(() => {
+      fetchVisits()
+        .then((fresh) => {
+          if (fresh && fresh.length > 0) {
+            setVisits(fresh);
+          }
+        })
+        .catch(() => {});
+    }, 25000);
 
     const officer = getAuthenticatedOfficer();
     if (officer) {
@@ -91,11 +113,23 @@ export default function App() {
 
     return () => {
       unsubscribe();
+      clearInterval(pollInterval);
     };
   }, []);
 
-  const refreshVisits = () => {
-    setVisits(getStoredVisits());
+  // Full refresh helper
+  const refreshVisits = async () => {
+    setIsSyncing(true);
+    try {
+      const fresh = await fetchVisits();
+      setVisits(fresh);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleManualSync = async () => {
+    await refreshVisits();
   };
 
   const handleDeleteVisit = async (visitId: string) => {
@@ -226,6 +260,8 @@ export default function App() {
           onLogout={handleLogout}
           onOpenPublicGuestbook={() => setCurrentView('guest')}
           onViewDetailVisit={(v) => setSelectedVisitForModal(v)}
+          onRefreshData={handleManualSync}
+          isSyncing={isSyncing}
         >
           {adminMenu === 'dashboard' && (
             <DashboardOverview
@@ -245,6 +281,8 @@ export default function App() {
               onNavigateToExport={() => setAdminMenu('export')}
               onDeleteVisit={handleDeleteVisit}
               onDeleteMultipleVisits={handleDeleteMultipleVisits}
+              onRefreshData={handleManualSync}
+              isSyncing={isSyncing}
             />
           )}
 

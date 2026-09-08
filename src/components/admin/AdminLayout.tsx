@@ -25,7 +25,8 @@ import {
   CheckCircle2,
   Clock,
   Trash2,
-  CalendarDays
+  CalendarDays,
+  RefreshCw
 } from 'lucide-react';
 import { Visit } from '../../types/posbakum';
 import { 
@@ -54,6 +55,8 @@ interface AdminLayoutProps {
   onLogout: () => void;
   onOpenPublicGuestbook: () => void;
   onViewDetailVisit?: (visit: Visit) => void;
+  onRefreshData?: () => Promise<void> | void;
+  isSyncing?: boolean;
   children: React.ReactNode;
 }
 
@@ -64,6 +67,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   onLogout,
   onOpenPublicGuestbook,
   onViewDetailVisit,
+  onRefreshData,
+  isSyncing = false,
   children,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -264,6 +269,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               <ExternalLink className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Form Pengunjung</span>
             </button>
+
+            {/* Direct Cloud Sync Button */}
+            {onRefreshData && (
+              <button
+                type="button"
+                id="btn-admin-sync-cloud-data"
+                onClick={() => onRefreshData()}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 rounded-lg text-[11px] font-bold text-slate-200 hover:text-white transition disabled:opacity-50"
+                title="Sinkronkan / Perbarui Data Kunjungan dari Cloud Database"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span className="hidden md:inline">{isSyncing ? 'Menyinkronkan...' : 'Sinkron Data'}</span>
+              </button>
+            )}
 
             {/* Real-time Notification Bell Popover */}
             <div className="relative">

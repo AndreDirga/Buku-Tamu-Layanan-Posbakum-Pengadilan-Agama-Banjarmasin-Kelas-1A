@@ -88,8 +88,20 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
 
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
+    let width = video.videoWidth || 640;
+    let height = video.videoHeight || 480;
+
+    // Constrain to maximum 640px dimension for ultra-fast, reliable transmission (<60KB)
+    const maxDim = 640;
+    if (width > maxDim || height > maxDim) {
+      if (width > height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
+    }
 
     canvas.width = width;
     canvas.height = height;
@@ -103,7 +115,7 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
     }
 
     ctx.drawImage(video, 0, 0, width, height);
-    const compressedJpeg = canvas.toDataURL('image/jpeg', 0.85);
+    const compressedJpeg = canvas.toDataURL('image/jpeg', 0.72);
 
     stopCamera();
     onPhotoCaptured(compressedJpeg);
@@ -124,7 +136,7 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const maxDim = 800;
+        const maxDim = 640;
         let width = img.width;
         let height = img.height;
 
@@ -142,7 +154,7 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
         onPhotoCaptured(dataUrl);
       };
       img.src = event.target?.result as string;

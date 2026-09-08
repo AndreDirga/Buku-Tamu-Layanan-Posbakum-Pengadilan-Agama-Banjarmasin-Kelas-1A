@@ -14,7 +14,8 @@ import {
   CheckCircle2,
   Calendar,
   Phone,
-  Scale
+  Scale,
+  RefreshCw
 } from 'lucide-react';
 
 interface VisitsListProps {
@@ -23,6 +24,8 @@ interface VisitsListProps {
   onNavigateToExport: () => void;
   onDeleteVisit: (visitId: string) => void;
   onDeleteMultipleVisits?: (visitIds: string[]) => void;
+  onRefreshData?: () => Promise<void> | void;
+  isSyncing?: boolean;
 }
 
 export const VisitsList: React.FC<VisitsListProps> = ({
@@ -31,6 +34,8 @@ export const VisitsList: React.FC<VisitsListProps> = ({
   onNavigateToExport,
   onDeleteVisit,
   onDeleteMultipleVisits,
+  onRefreshData,
+  isSyncing = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -218,6 +223,19 @@ export const VisitsList: React.FC<VisitsListProps> = ({
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Hapus Terpilih ({selectedIds.length})</span>
+            </button>
+          )}
+
+          {onRefreshData && (
+            <button
+              type="button"
+              onClick={() => onRefreshData()}
+              disabled={isSyncing}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 hover:text-slate-900 text-xs font-bold rounded-xl shadow-xs transition shrink-0 disabled:opacity-50"
+              title="Sinkronkan data dengan Cloud Firestore"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isSyncing ? 'Menyinkronkan...' : 'Sinkron Data'}</span>
             </button>
           )}
 

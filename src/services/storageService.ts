@@ -73,6 +73,79 @@ export const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T =
   return clean;
 };
 
+// Defensive normalizer to ensure every Firestore document has complete fields
+export const normalizeVisitData = (data: any, docId: string): Visit => {
+  const createdAt = data.createdAt || data.visitedAt || data.timestamp || new Date().toISOString();
+  const visitedAt = data.visitedAt || createdAt;
+
+  let dateDisplay = data.dateDisplay;
+  let timeDisplay = data.timeDisplay;
+  if (!dateDisplay || !timeDisplay) {
+    try {
+      const d = new Date(visitedAt);
+      const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const monthNames = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      dateDisplay = dateDisplay || `${dayNames[d.getDay()]}, ${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+      timeDisplay = timeDisplay || `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} WITA`;
+    } catch {
+      dateDisplay = dateDisplay || 'Hari ini';
+      timeDisplay = timeDisplay || '08:00 WITA';
+    }
+  }
+
+  return {
+    id: data.id || docId,
+    visitNumber: data.visitNumber || `KJG-${docId.substring(0, 8).toUpperCase()}`,
+    name: data.name || 'Pengunjung',
+    ktpAddress: data.ktpAddress || '',
+    domicileAddress: data.domicileAddress || data.ktpAddress || '',
+    domicileSameAsKtp: data.domicileSameAsKtp ?? true,
+    email: data.email || '',
+    whatsapp: data.whatsapp || '',
+    occupation: data.occupation || 'Lainnya',
+    occupationOther: data.occupationOther,
+    caseCategory: data.caseCategory || 'Lainnya',
+    caseType: data.caseType || 'Layanan Posbakum',
+    caseTypeOther: data.caseTypeOther,
+    selfieUrl: data.selfieUrl || '',
+    selfieFileName: data.selfieFileName || `${data.visitNumber || docId}-selfie.jpg`,
+    signatureUrl: data.signatureUrl || '',
+    signatureFileName: data.signatureFileName || `${data.visitNumber || docId}-signature.png`,
+    qrToken: data.qrToken || 'DIRECT-WEB',
+    status: (data.status as Visit['status']) || 'Menunggu',
+    visitedAt,
+    createdAt,
+    dateDisplay,
+    timeDisplay,
+    notes: data.notes || '',
+    officerName: data.officerName || '',
+    updatedAt: data.updatedAt,
+  };
+};
+
+// Safe localStorage persistence that handles quota limits without crashing the app
+export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
+  try {
+    localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
+  } catch (err) {
+    console.warn('LocalStorage quota limit reached, saving compact representation:', err);
+    try {
+      // Keep full data in memory, but trim large base64 strings in local storage to prevent crash
+      const compact = visits.map((v) => ({
+        ...v,
+        selfieUrl: v.selfieUrl && v.selfieUrl.length > 50000 ? v.selfieUrl.substring(0, 5000) : v.selfieUrl,
+        signatureUrl: v.signatureUrl && v.signatureUrl.length > 20000 ? v.signatureUrl.substring(0, 2000) : v.signatureUrl,
+      }));
+      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(compact));
+    } catch (err2) {
+      console.error('LocalStorage write failed even with compact representation:', err2);
+    }
+  }
+};
+
 // Helper to get local cache
 export const getStoredVisits = (): Visit[] => {
   try {
@@ -80,10 +153,72 @@ export const getStoredVisits = (): Visit[] => {
     if (!raw) {
       return [];
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => normalizeVisitData(item, item.id || 'cache-id'));
+    }
+    return [];
   } catch (err) {
     console.error('Failed to load visits from localStorage', err);
     return [];
+  }
+};
+
+// Merge cloud and local visits cleanly without loss or duplicate
+export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => {
+  const map = new Map<string, Visit>();
+
+  // 1. Add local visits
+  localList.forEach((v) => {
+    if (v.id) map.set(v.id, v);
+  });
+
+  // 2. Overwrite with Cloud Firestore data, preserving local photos if cloud had empty string
+  cloudList.forEach((v) => {
+    const existing = map.get(v.id);
+    if (existing) {
+      map.set(v.id, {
+        ...existing,
+        ...v,
+        selfieUrl: v.selfieUrl || existing.selfieUrl,
+        signatureUrl: v.signatureUrl || existing.signatureUrl,
+      });
+    } else {
+      map.set(v.id, v);
+    }
+  });
+
+  const merged = Array.from(map.values());
+  // Sort descending by visitedAt or createdAt
+  merged.sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.visitedAt || 0).getTime();
+    const timeB = new Date(b.createdAt || b.visitedAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  return merged;
+};
+
+// Direct fetch from Cloud Firestore (reads ALL documents without skipping any)
+export const fetchVisits = async (): Promise<Visit[]> => {
+  try {
+    const visitsCol = collection(db, 'visits');
+    // Notice: Direct collection read ensures documents without 'createdAt' are NOT excluded
+    const snapshot = await getDocs(visitsCol);
+    const cloudVisits: Visit[] = [];
+
+    snapshot.forEach((docSnap) => {
+      cloudVisits.push(normalizeVisitData(docSnap.data(), docSnap.id));
+    });
+
+    const localVisits = getStoredVisits();
+    const merged = mergeVisits(cloudVisits, localVisits);
+
+    safeSaveVisitsToStorage(merged);
+    return merged;
+  } catch (err) {
+    console.warn('Direct fetchVisits encountered error, using local cache:', err);
+    return getStoredVisits();
   }
 };
 
@@ -91,23 +226,20 @@ export const getStoredVisits = (): Visit[] => {
 export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => void) => {
   try {
     const visitsCol = collection(db, 'visits');
-    const q = query(visitsCol, orderBy('createdAt', 'desc'));
+    // We listen to the collection directly without server-side orderBy
+    // This is vital: Firestore orderBy silently omits documents missing the ordered field!
     let knownVisitIds: Set<string> | null = null;
 
     const unsubscribe = onSnapshot(
-      q,
+      visitsCol,
       (snapshot) => {
-        const list: Visit[] = [];
+        const cloudList: Visit[] = [];
         const isSubsequentUpdate = knownVisitIds !== null;
         const currentIds = new Set<string>();
 
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as Visit;
-          const visitItem: Visit = {
-            ...data,
-            id: data.id || docSnap.id,
-          };
-          list.push(visitItem);
+          const visitItem = normalizeVisitData(docSnap.data(), docSnap.id);
+          cloudList.push(visitItem);
           currentIds.add(visitItem.id);
 
           // If this is a subsequent real-time update from Firestore, detect brand new arrivals
@@ -115,26 +247,28 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
             broadcastNewVisit(visitItem);
           }
         });
-        
+
         knownVisitIds = currentIds;
 
-        // Sort descending by visitedAt/createdAt
-        list.sort((a, b) => new Date(b.createdAt || b.visitedAt).getTime() - new Date(a.createdAt || a.visitedAt).getTime());
+        const localVisits = getStoredVisits();
+        const merged = mergeVisits(cloudList, localVisits);
 
-        // Update local cache
-        localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(list));
-        callback(list);
+        // Safely update local storage without crashing
+        safeSaveVisitsToStorage(merged);
+
+        // Always notify the subscriber
+        callback(merged);
       },
       (error) => {
-        console.warn('Firestore visits snapshot warning/fallback to cache:', error);
-        callback(getStoredVisits());
+        console.warn('Firestore visits snapshot warning, triggering direct fetch fallback:', error);
+        fetchVisits().then(callback).catch(() => callback(getStoredVisits()));
       }
     );
 
     return unsubscribe;
   } catch (err) {
     console.error('Error setting up visits subscription:', err);
-    callback(getStoredVisits());
+    fetchVisits().then(callback).catch(() => callback(getStoredVisits()));
     return () => {};
   }
 };
@@ -143,19 +277,37 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
 export const saveVisit = async (
   newVisitData: Omit<Visit, 'id' | 'visitNumber' | 'createdAt' | 'status'> & { status?: Visit['status'] }
 ): Promise<Visit> => {
-  const visits = getStoredVisits();
+  const localVisits = getStoredVisits();
   const now = new Date();
-  
+
   // Date format YYYYMMDD
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   const dateStr = `${year}${month}${day}`;
-
-  // Find visits on same date to generate sequential NNNN
   const todayPrefix = `KJG-${dateStr}-`;
-  const todaysVisits = visits.filter(v => v.visitNumber && v.visitNumber.startsWith(todayPrefix));
-  const nextSeq = todaysVisits.length + 1;
+
+  // Find visits on same date across local & cloud to generate accurate sequential NNNN
+  let existingCount = localVisits.filter(v => v.visitNumber && v.visitNumber.startsWith(todayPrefix)).length;
+
+  try {
+    const visitsCol = collection(db, 'visits');
+    const snap = await getDocs(visitsCol);
+    if (!snap.empty) {
+      let remoteCount = 0;
+      snap.forEach((d) => {
+        const num = d.data()?.visitNumber;
+        if (num && typeof num === 'string' && num.startsWith(todayPrefix)) {
+          remoteCount++;
+        }
+      });
+      existingCount = Math.max(existingCount, remoteCount);
+    }
+  } catch (e) {
+    console.warn('Could not query remote visit count for sequence, using local count:', e);
+  }
+
+  const nextSeq = existingCount + 1;
   const visitNumber = `${todayPrefix}${String(nextSeq).padStart(4, '0')}`;
 
   // Formatted date & time in Indonesian
@@ -186,8 +338,8 @@ export const saveVisit = async (
   };
 
   // 1. Update local cache immediately for zero latency
-  const updated = [visitRecord, ...visits.filter(v => v.id !== visitRecord.id)];
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  const updated = [visitRecord, ...localVisits.filter(v => v.id !== visitRecord.id)];
+  safeSaveVisitsToStorage(updated);
 
   // 2. Persist permanently to Cloud Firestore with sanitized payload
   try {
@@ -515,16 +667,19 @@ export const getStoredLogs = (): ActivityLog[] => {
 export const subscribeToLogs = (callback: (logs: ActivityLog[]) => void): (() => void) => {
   try {
     const logsCol = collection(db, 'activity_logs');
-    const q = query(logsCol, orderBy('timestamp', 'desc'), limit(100));
 
     const unsubscribe = onSnapshot(
-      q,
+      logsCol,
       (snapshot) => {
         if (!snapshot.empty) {
           const list: ActivityLog[] = [];
           snapshot.forEach((d) => list.push(d.data() as ActivityLog));
-          localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(list));
-          callback(list);
+          list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+          const trimmed = list.slice(0, 100);
+          try {
+            localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(trimmed));
+          } catch {}
+          callback(trimmed);
         } else {
           callback(getStoredLogs());
         }
