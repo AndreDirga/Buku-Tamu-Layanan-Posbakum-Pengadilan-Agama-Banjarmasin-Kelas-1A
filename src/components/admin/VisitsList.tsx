@@ -62,18 +62,18 @@ export const VisitsList: React.FC<VisitsListProps> = ({
     return list;
   }, []);
 
-  // Filtered visits
+  // Filtered and sorted visits
   const filteredVisits = useMemo(() => {
-    return visits.filter((v) => {
+    const list = visits.filter((v) => {
       // Search query (name, visitNumber, whatsapp, email, caseType)
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesQuery =
-          v.name.toLowerCase().includes(query) ||
-          v.visitNumber.toLowerCase().includes(query) ||
-          v.whatsapp.toLowerCase().includes(query) ||
-          v.email.toLowerCase().includes(query) ||
-          v.caseType.toLowerCase().includes(query);
+          (v.name || '').toLowerCase().includes(query) ||
+          (v.visitNumber || '').toLowerCase().includes(query) ||
+          (v.whatsapp || '').toLowerCase().includes(query) ||
+          (v.email || '').toLowerCase().includes(query) ||
+          (v.caseType || '').toLowerCase().includes(query);
         if (!matchesQuery) return false;
       }
 
@@ -88,17 +88,33 @@ export const VisitsList: React.FC<VisitsListProps> = ({
       }
 
       // Date Range filter
-      if (startDate) {
-        const visitDate = v.visitedAt.substring(0, 10);
-        if (visitDate < startDate) return false;
-      }
-      if (endDate) {
-        const visitDate = v.visitedAt.substring(0, 10);
-        if (visitDate > endDate) return false;
+      if (startDate || endDate) {
+        const d = new Date(v.visitedAt || v.createdAt || 0);
+        let visitDate = '';
+        if (!isNaN(d.getTime())) {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          visitDate = `${y}-${m}-${day}`;
+        } else {
+          visitDate = (v.visitedAt || '').substring(0, 10);
+        }
+
+        if (startDate && visitDate < startDate) return false;
+        if (endDate && visitDate > endDate) return false;
       }
 
       return true;
     });
+
+    // Always sort descending: newest visit is always first
+    list.sort((a, b) => {
+      const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+
+    return list;
   }, [visits, searchQuery, selectedCaseType, selectedStatus, startDate, endDate]);
 
   const handleResetFilters = () => {

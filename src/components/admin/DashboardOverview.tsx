@@ -49,8 +49,21 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // 100% Dynamic KPI Calculations from Real Visits
   const stats = useMemo(() => {
     const checkDateMatch = (v: Visit, prefix: string) => {
-      const dt = v.visitedAt || v.createdAt || '';
-      return dt.startsWith(prefix);
+      if (!v) return false;
+      const raw = v.visitedAt || v.createdAt || '';
+      if (!raw) return false;
+      if (raw.startsWith(prefix)) return true;
+      try {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          const localYMD = `${y}-${m}-${day}`;
+          if (localYMD.startsWith(prefix)) return true;
+        }
+      } catch {}
+      return false;
     };
 
     const total = visits.length;
@@ -123,7 +136,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   }, [visits, todayYMD]);
 
   const maxWeekly = Math.max(...weeklyData.map((d) => d.count), 1);
-  const recentVisits = visits.slice(0, 6);
+  const sortedVisits = useMemo(() => {
+    return [...visits].sort((a, b) => {
+      const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+  }, [visits]);
+  const recentVisits = sortedVisits.slice(0, 8);
 
   return (
     <div className="space-y-3.5 text-xs font-sans">

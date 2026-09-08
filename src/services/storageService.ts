@@ -1,6 +1,6 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
-import { broadcastNewVisit } from './notificationService';
+import { broadcastNewVisit, subscribeToNewVisits } from './notificationService';
 import { 
   collection, 
   doc, 
@@ -246,13 +246,13 @@ export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => 
   return merged;
 };
 
-// Direct fetch from Server Database API (with fallback to Cloud Firestore & LocalStorage)
+// Direct fetch from Server Database API (with fast fallback to LocalStorage)
 export const fetchVisits = async (): Promise<Visit[]> => {
-  let serverVisits: Visit[] = [];
+  let serverVisits: Visit[] | null = null;
 
-  // 1. Primary Source: Server Database API (zero quota limits, 100% durable & cross-device)
+  // 1. Primary Source: Server Database API (authoritative, zero quota limits, 100% durable & cross-device)
   try {
-    const res = await fetch('/api/visits');
+    const res = await fetch('/api/visits', { cache: 'no-store' });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -263,29 +263,32 @@ export const fetchVisits = async (): Promise<Visit[]> => {
     console.warn('Server /api/visits not reachable, using fallback:', err);
   }
 
-  // 2. Read all local storage visits (recovers previously entered data)
-  const localVisits = getAllLocalVisits();
+  // If server responded with data: update local storage cache and return it immediately
+  if (serverVisits !== null && serverVisits.length > 0) {
+    const localVisits = getAllLocalVisits();
+    const serverIds = new Set(serverVisits.map((v) => v.id));
+    const missingOnServer = localVisits.filter((v) => v.id && !serverIds.has(v.id));
 
-  // 3. Automatically sync any local visits to the server database so other devices can read them
+    if (missingOnServer.length > 0) {
+      // Sync any missing local visits to server in background
+      syncLocalVisitsToServer(missingOnServer).catch(() => {});
+      const merged = mergeVisits(serverVisits, missingOnServer);
+      safeSaveVisitsToStorage(merged);
+      return merged;
+    }
+
+    safeSaveVisitsToStorage(serverVisits);
+    return serverVisits;
+  }
+
+  // Fallback if server returned empty or failed: use local visits
+  const localVisits = getAllLocalVisits();
   if (localVisits.length > 0) {
     syncLocalVisitsToServer(localVisits).catch(() => {});
+    return localVisits;
   }
 
-  // 4. Try Firestore in background (gracefully catches quota limit exceeded)
-  let cloudVisits: Visit[] = [];
-  try {
-    const visitsCol = collection(db, 'visits');
-    const snapshot = await getDocs(visitsCol);
-    snapshot.forEach((docSnap) => {
-      cloudVisits.push(normalizeVisitData(docSnap.data(), docSnap.id));
-    });
-  } catch (err) {
-    // Quota limits or network errors on free tier are gracefully ignored
-  }
-
-  const merged = mergeVisits([...serverVisits, ...cloudVisits], localVisits);
-  safeSaveVisitsToStorage(merged);
-  return merged;
+  return serverVisits || [];
 };
 
 // Real-time synchronization for Visits collection across all browsers and devices
@@ -296,18 +299,16 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   const syncFromServer = async () => {
     if (!isSubscribed) return;
     try {
-      const res = await fetch('/api/visits');
+      const res = await fetch('/api/visits', { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const fresh = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
-          const local = getAllLocalVisits();
-          const merged = mergeVisits(fresh, local);
-          const checksum = merged.map((v) => `${v.id}_${v.updatedAt || ''}_${v.status}_${v.notes || ''}`).join('|');
+          const checksum = fresh.map((v) => `${v.id}_${v.updatedAt || ''}_${v.status}_${v.notes || ''}`).join('|');
           if (checksum !== lastChecksum) {
             lastChecksum = checksum;
-            safeSaveVisitsToStorage(merged);
-            callback(merged);
+            safeSaveVisitsToStorage(fresh);
+            callback(fresh);
           }
         }
       }
@@ -317,81 +318,60 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   // Immediate sync on subscribe
   syncFromServer();
 
-  // Fast polling every 3 seconds for instant real-time updates across multiple admin/guest tabs
-  const intervalId = setInterval(syncFromServer, 3000);
+  // Fast polling every 2 seconds for instant real-time updates across multiple admin/guest tabs
+  const intervalId = setInterval(syncFromServer, 2000);
 
-  // Real-time Cloud Firestore subscription fallback
-  let unsubFirestore: (() => void) | null = null;
-  try {
-    const visitsCol = collection(db, 'visits');
-    unsubFirestore = onSnapshot(
-      visitsCol,
-      (snapshot) => {
-        if (!isSubscribed) return;
-        const cloudList: Visit[] = [];
-        snapshot.forEach((docSnap) => {
-          cloudList.push(normalizeVisitData(docSnap.data(), docSnap.id));
-        });
-        if (cloudList.length > 0) {
-          const local = getStoredVisits();
-          const merged = mergeVisits(cloudList, local);
-          safeSaveVisitsToStorage(merged);
-          callback(merged);
+  // Cross-tab broadcast & storage listeners for instant update when guest submits in another tab
+  const handleStorageChange = (e: StorageEvent) => {
+    if (!isSubscribed) return;
+    if (e.key === STORAGE_KEY_VISITS) {
+      try {
+        const parsed = JSON.parse(e.newValue || '[]');
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          callback(parsed);
         }
-      },
-      () => {
-        // Quota limits or connection errors - server API handles real-time polling
-      }
-    );
-  } catch {}
+      } catch {}
+      syncFromServer();
+    }
+  };
+
+  const handleFocus = () => {
+    if (isSubscribed) {
+      syncFromServer();
+    }
+  };
+
+  window.addEventListener('storage', handleStorageChange);
+  window.addEventListener('focus', handleFocus);
+
+  // BroadcastChannel listener
+  const unsubBroadcast = subscribeToNewVisits(() => {
+    if (isSubscribed) {
+      syncFromServer();
+    }
+  });
 
   return () => {
     isSubscribed = false;
     clearInterval(intervalId);
-    if (unsubFirestore) {
-      try {
-        unsubFirestore();
-      } catch {}
-    }
+    window.removeEventListener('storage', handleStorageChange);
+    window.removeEventListener('focus', handleFocus);
+    unsubBroadcast();
   };
 };
 
-// Save a new visit permanently to Cloud Firestore and local storage
+// Save a new visit permanently to Server Database and local storage
 export const saveVisit = async (
   newVisitData: Omit<Visit, 'id' | 'visitNumber' | 'createdAt' | 'status'> & { status?: Visit['status'] }
 ): Promise<Visit> => {
-  const localVisits = getStoredVisits();
   const now = new Date();
 
-  // Date format YYYYMMDD
+  // Format date YYYYMMDD
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   const dateStr = `${year}${month}${day}`;
   const todayPrefix = `KJG-${dateStr}-`;
-
-  // Find visits on same date across local & cloud to generate accurate sequential NNNN
-  let existingCount = localVisits.filter(v => v.visitNumber && v.visitNumber.startsWith(todayPrefix)).length;
-
-  try {
-    const visitsCol = collection(db, 'visits');
-    const snap = await getDocs(visitsCol);
-    if (!snap.empty) {
-      let remoteCount = 0;
-      snap.forEach((d) => {
-        const num = d.data()?.visitNumber;
-        if (num && typeof num === 'string' && num.startsWith(todayPrefix)) {
-          remoteCount++;
-        }
-      });
-      existingCount = Math.max(existingCount, remoteCount);
-    }
-  } catch (e) {
-    console.warn('Could not query remote visit count for sequence, using local count:', e);
-  }
-
-  const nextSeq = existingCount + 1;
-  const visitNumber = `${todayPrefix}${String(nextSeq).padStart(4, '0')}`;
 
   // Formatted date & time in Indonesian
   const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -407,47 +387,66 @@ export const saveVisit = async (
   const dateDisplay = `${dayName}, ${now.getDate()} ${monthName} ${year}`;
   const timeDisplay = `${hours}:${minutes} WITA`;
 
-  const visitRecord: Visit = {
+  const visitId = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+  let visitRecord: Visit = {
     ...newVisitData,
-    id: `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    visitNumber,
+    id: visitId,
+    visitNumber: '', // Server will assign the authoritative queue number atomically
     visitedAt: now.toISOString(),
     dateDisplay,
     timeDisplay,
-    selfieFileName: `${visitNumber}-selfie.jpg`,
-    signatureFileName: `${visitNumber}-signature.png`,
+    selfieFileName: `${visitId}-selfie.jpg`,
+    signatureFileName: `${visitId}-signature.png`,
     status: newVisitData.status || 'Menunggu',
     createdAt: now.toISOString(),
   };
 
-  // 1. Update local cache immediately for zero latency
-  const updated = [visitRecord, ...localVisits.filter(v => v.id !== visitRecord.id)];
-  safeSaveVisitsToStorage(updated);
-
-  // 2. Persist to Server Database API (durable, zero quota limit, cross-device)
+  // 1. Primary Save: Direct to Server Database API (assigns sequential number, writes to disk)
   try {
-    await fetch('/api/visits', {
+    const res = await fetch('/api/visits', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(visitRecord),
     });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        visitRecord = normalizeVisitData(json.data, json.data.id || visitId);
+      }
+    }
   } catch (err) {
-    console.warn('Server API write warning:', err);
+    console.warn('Server API write warning, using local fallback sequence:', err);
   }
 
-  // 3. Persist permanently to Cloud Firestore with sanitized payload (safe fallback)
-  try {
-    const cleanRecord = sanitizeForFirestore(visitRecord);
-    const docRef = doc(db, 'visits', visitRecord.id);
-    await setDoc(docRef, cleanRecord);
-  } catch (err) {
-    // Quota limits or network errors handled gracefully
+  // If server was offline or unreachable, assign local sequence fallback
+  if (!visitRecord.visitNumber) {
+    const localVisits = getStoredVisits();
+    const countToday = localVisits.filter((v) => v.visitNumber && v.visitNumber.startsWith(todayPrefix)).length;
+    visitRecord.visitNumber = `${todayPrefix}${String(countToday + 1).padStart(4, '0')}`;
   }
+
+  // 2. Update local cache immediately for zero latency
+  const localVisits = getStoredVisits();
+  const updated = [visitRecord, ...localVisits.filter((v) => v.id !== visitRecord.id)];
+  safeSaveVisitsToStorage(updated);
+
+  // 3. Detached non-blocking Firestore fallback (fire-and-forget, never blocks user interface)
+  setTimeout(async () => {
+    try {
+      const cleanRecord = sanitizeForFirestore(visitRecord);
+      const docRef = doc(db, 'visits', visitRecord.id);
+      await Promise.race([
+        setDoc(docRef, cleanRecord),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2000)),
+      ]);
+    } catch {}
+  }, 10);
 
   // 4. Log activity permanently
   logActivity({
     action: 'TAMBAH_KUNJUNGAN',
-    description: `Buku tamu terdaftar: ${visitNumber} (${visitRecord.name} - ${visitRecord.caseType})`,
+    description: `Buku tamu terdaftar: ${visitRecord.visitNumber} (${visitRecord.name} - ${visitRecord.caseType})`,
     userRole: 'Pengunjung',
     userName: 'Sistem Publik',
     userId: 'public-guest',
@@ -457,23 +456,19 @@ export const saveVisit = async (
   // 5. Real-time notification trigger for admin dashboard & other open tabs
   broadcastNewVisit(visitRecord);
 
-  // 5. Automatic Daily Sync to Admin Google Drive (gdriveandria1@gmail.com)
+  // 6. Automatic Daily Sync to Admin Google Drive
   try {
     import('./googleDriveAdminService').then(({ isGDriveAutoSyncEnabled, getStoredGDriveAuth, syncDailyVisitsToGDrive }) => {
       if (isGDriveAutoSyncEnabled()) {
         const authInfo = getStoredGDriveAuth();
         if (authInfo?.accessToken) {
           const todayISO = now.toISOString().substring(0, 10);
-          const visitsToday = updated.filter(v => (v.visitedAt || v.createdAt || '').substring(0, 10) === todayISO);
-          syncDailyVisitsToGDrive(todayISO, visitsToday).catch((e) => {
-            console.warn('Background auto-sync to Google Drive error:', e);
-          });
+          const visitsToday = updated.filter((v) => (v.visitedAt || v.createdAt || '').substring(0, 10) === todayISO);
+          syncDailyVisitsToGDrive(todayISO, visitsToday).catch(() => {});
         }
       }
     }).catch(() => {});
-  } catch (e) {
-    console.warn('Could not initiate Google Drive background sync:', e);
-  }
+  } catch {}
 
   return visitRecord;
 };

@@ -238,6 +238,9 @@ app.get('/api/health', (req, res) => {
 
 // GET all visits (instant, 100% reliable, zero Firestore quota limits)
 app.get('/api/visits', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     // Re-read or return in-memory
     if (!visitsCache || visitsCache.length === 0) {
@@ -254,7 +257,36 @@ app.get('/api/visits', (req, res) => {
   }
 });
 
-// POST new visit
+// GET next available queue number for today
+app.get('/api/visits/next-number', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  try {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${y}${m}${d}`;
+    const todayPrefix = `KJG-${dateStr}-`;
+
+    let maxSeq = 0;
+    visitsCache.forEach((v) => {
+      if (v.visitNumber && typeof v.visitNumber === 'string' && v.visitNumber.startsWith(todayPrefix)) {
+        const parts = v.visitNumber.split('-');
+        const lastPart = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(lastPart) && lastPart > maxSeq) {
+          maxSeq = lastPart;
+        }
+      }
+    });
+
+    const nextNumber = `${todayPrefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    res.json({ success: true, nextNumber, dateStr, todayCount: maxSeq });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST new visit (atomically assigned queue number & instant storage)
 app.post('/api/visits', (req, res) => {
   try {
     const newVisit = req.body;
@@ -262,24 +294,68 @@ app.post('/api/visits', (req, res) => {
       return res.status(400).json({ success: false, message: 'Data kunjungan tidak valid.' });
     }
 
+    const now = new Date(newVisit.visitedAt || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${y}${m}${d}`;
+    const todayPrefix = `KJG-${dateStr}-`;
+
+    // Check if visitNumber already exists in cache or needs generation
+    const isVisitNumberTaken = newVisit.visitNumber && visitsCache.some((v) => v.visitNumber === newVisit.visitNumber && v.id !== newVisit.id);
+
+    if (!newVisit.visitNumber || isVisitNumberTaken) {
+      let maxSeq = 0;
+      visitsCache.forEach((v) => {
+        if (v.visitNumber && typeof v.visitNumber === 'string' && v.visitNumber.startsWith(todayPrefix)) {
+          const parts = v.visitNumber.split('-');
+          const lastPart = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(lastPart) && lastPart > maxSeq) {
+            maxSeq = lastPart;
+          }
+        }
+      });
+      newVisit.visitNumber = `${todayPrefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    }
+
     // Ensure ID and timestamps
     if (!newVisit.id) {
       newVisit.id = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     }
     if (!newVisit.visitedAt) {
-      newVisit.visitedAt = new Date().toISOString();
+      newVisit.visitedAt = now.toISOString();
     }
     if (!newVisit.createdAt) {
       newVisit.createdAt = new Date().toISOString();
     }
 
-    // Check if visit already exists
-    const existingIndex = visitsCache.findIndex((v) => v.id === newVisit.id || (newVisit.visitNumber && v.visitNumber === newVisit.visitNumber));
+    // Ensure date & time display
+    if (!newVisit.dateDisplay || !newVisit.timeDisplay) {
+      const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const monthNames = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      newVisit.dateDisplay = newVisit.dateDisplay || `${dayNames[now.getDay()]}, ${now.getDate()} ${monthNames[now.getMonth()]} ${y}`;
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      newVisit.timeDisplay = newVisit.timeDisplay || `${hours}:${minutes} WITA`;
+    }
+
+    // Only update if exact same ID exists, otherwise prepend as a fresh record
+    const existingIndex = visitsCache.findIndex((v) => v.id === newVisit.id);
     if (existingIndex >= 0) {
       visitsCache[existingIndex] = { ...visitsCache[existingIndex], ...newVisit };
     } else {
       visitsCache = [newVisit, ...visitsCache];
     }
+
+    // Keep visitsCache strictly sorted descending by visitedAt/createdAt (newest first)
+    visitsCache.sort((a, b) => {
+      const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
 
     saveVisitsToDisk(visitsCache);
 
