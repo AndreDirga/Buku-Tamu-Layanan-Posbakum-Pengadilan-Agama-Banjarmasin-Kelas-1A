@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
 import { CourtEmblem } from '../common/CourtEmblem';
-import { updateVisitDetails, logActivity, deleteVisit } from '../../services/storageService';
+import { SafeVisitImage } from '../common/SafeVisitImage';
+import { getDataUrlSizeKb, compressImageToTargetKb } from '../../utils/imageCompressor';
+import { updateVisitDetails, logActivity, deleteVisit, isRealUserImage } from '../../services/storageService';
 import { 
   X, 
   Printer, 
@@ -23,7 +25,10 @@ import {
   MessageSquare,
   Trash2,
   AlertTriangle,
-  Edit3
+  Edit3,
+  Upload,
+  Camera,
+  PenTool
 } from 'lucide-react';
 
 interface VisitDetailModalProps {
@@ -56,6 +61,87 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isUploadingSelfie, setIsUploadingSelfie] = useState(false);
+  const [isUploadingSig, setIsUploadingSig] = useState(false);
+  const selfieInputRef = useRef<HTMLInputElement>(null);
+  const sigInputRef = useRef<HTMLInputElement>(null);
+
+  // Compute selfie size in KB
+  const selfieSizeKb = useMemo(() => {
+    return visit.selfieUrl ? getDataUrlSizeKb(visit.selfieUrl) : null;
+  }, [visit.selfieUrl]);
+
+  // Compute signature size in KB
+  const sigSizeKb = useMemo(() => {
+    return visit.signatureUrl ? getDataUrlSizeKb(visit.signatureUrl) : null;
+  }, [visit.signatureUrl]);
+
+  const isRealSelfie = useMemo(() => isRealUserImage(visit.selfieUrl), [visit.selfieUrl]);
+  const isRealSig = useMemo(() => isRealUserImage(visit.signatureUrl), [visit.signatureUrl]);
+
+  const handleSelfieFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingSelfie(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const rawBase64 = reader.result as string;
+        // Auto convert to ~150 KB
+        const compRes = await compressImageToTargetKb(rawBase64, 150);
+        const updated = await updateVisitDetails(
+          visit.id,
+          {
+            selfieUrl: compRes.dataUrl,
+            selfieFileName: file.name,
+          },
+          'Admin'
+        );
+        if (updated) {
+          onVisitUpdated(updated);
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 2000);
+        }
+      } catch (err) {
+        console.error('Failed to compress/save selfie:', err);
+      } finally {
+        setIsUploadingSelfie(false);
+        if (selfieInputRef.current) selfieInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSigFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingSig(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const rawBase64 = reader.result as string;
+        const updated = await updateVisitDetails(
+          visit.id,
+          {
+            signatureUrl: rawBase64,
+            signatureFileName: file.name,
+          },
+          'Admin'
+        );
+        if (updated) {
+          onVisitUpdated(updated);
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 2000);
+        }
+      } catch (err) {
+        console.error('Failed to save signature:', err);
+      } finally {
+        setIsUploadingSig(false);
+        if (sigInputRef.current) sigInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const currentCategoryObj = CASE_CATEGORIES.find(c => c.id === selectedCategoryId) || CASE_CATEGORIES[0];
 
@@ -355,68 +441,130 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
               {/* Photos Grid */}
               <div className="grid grid-cols-2 gap-2">
                 {/* Selfie */}
-                <div className="bg-slate-50 rounded-xl p-2 border border-slate-200 space-y-1 text-center">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
-                    <span>Foto Selfie</span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomedImage(visit.selfieUrl)}
-                      className="text-slate-400 hover:text-slate-700"
-                      title="Perbesar"
-                    >
-                      <Maximize2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div 
-                    onClick={() => visit.selfieUrl && setZoomedImage(visit.selfieUrl)}
-                    className="relative w-full aspect-square rounded-lg overflow-hidden bg-slate-900 border border-slate-300 cursor-pointer group flex items-center justify-center"
-                  >
-                    {visit.selfieUrl ? (
-                      <img
-                        src={visit.selfieUrl}
-                        alt="Selfie"
-                        className="w-full h-full object-cover group-hover:scale-105 transition"
-                      />
-                    ) : (
-                      <span className="text-[10px] text-slate-400">Tidak ada foto</span>
-                    )}
-                  </div>
-                  <div className="text-[9px] font-mono text-slate-400 truncate">
-                    {visit.selfieFileName || '-'}
-                  </div>
-                </div>
-
-                {/* Signature */}
-                <div className="bg-slate-50 rounded-xl p-2 border border-slate-200 space-y-1 text-center">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
-                    <span>Tanda Tangan</span>
-                    {visit.signatureUrl && (
+                <div className="bg-slate-50 rounded-xl p-2 border border-slate-200 space-y-1.5 text-center flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 mb-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span>Foto Selfie</span>
+                        {isRealSelfie ? (
+                          <span className="text-[8px] font-bold text-emerald-800 bg-emerald-100/90 px-1 py-0.2 rounded border border-emerald-300">
+                            {selfieSizeKb} KB (Asli)
+                          </span>
+                        ) : (
+                          <span className="text-[8px] font-bold text-amber-800 bg-amber-100/90 px-1 py-0.2 rounded border border-amber-300">
+                            Avatar Cadangan
+                          </span>
+                        )}
+                      </div>
                       <button
                         type="button"
-                        onClick={() => setZoomedImage(visit.signatureUrl)}
+                        onClick={() => setZoomedImage(visit.selfieUrl)}
                         className="text-slate-400 hover:text-slate-700"
                         title="Perbesar"
                       >
                         <Maximize2 className="w-3 h-3" />
                       </button>
-                    )}
+                    </div>
+                    <div 
+                      onClick={() => setZoomedImage(visit.selfieUrl || '')}
+                      className="relative w-full aspect-square rounded-lg overflow-hidden bg-slate-900 border border-slate-300 cursor-pointer group flex items-center justify-center"
+                    >
+                      <SafeVisitImage
+                        src={visit.selfieUrl}
+                        alt="Selfie"
+                        type="selfie"
+                        visitorName={visit.name}
+                        visitNumber={visit.visitNumber}
+                        className="w-full h-full object-cover group-hover:scale-105 transition"
+                      />
+                    </div>
+                    <div className="text-[9px] font-mono text-slate-400 truncate mt-1">
+                      {visit.selfieFileName || 'foto-selfie.jpg'}
+                    </div>
                   </div>
-                  <div 
-                    onClick={() => visit.signatureUrl && setZoomedImage(visit.signatureUrl)}
-                    className="relative w-full aspect-square rounded-lg overflow-hidden bg-white border border-slate-300 flex items-center justify-center p-1.5 cursor-pointer group"
-                  >
-                    {visit.signatureUrl ? (
-                      <img
+
+                  {/* Upload / Restore Selfie */}
+                  <div className="pt-1 border-t border-slate-200/80">
+                    <input
+                      type="file"
+                      ref={selfieInputRef}
+                      accept="image/*"
+                      onChange={handleSelfieFileSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingSelfie}
+                      onClick={() => selfieInputRef.current?.click()}
+                      className="w-full py-1 px-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-1 transition shadow-2xs"
+                    >
+                      <Upload className="w-2.5 h-2.5" />
+                      <span>{isUploadingSelfie ? 'Mengompres 150 KB...' : 'Ganti / Pulihkan Foto'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Signature */}
+                <div className="bg-slate-50 rounded-xl p-2 border border-slate-200 space-y-1.5 text-center flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 mb-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span>Tanda Tangan</span>
+                        {isRealSig ? (
+                          <span className="text-[8px] font-bold text-emerald-800 bg-emerald-100/90 px-1 py-0.2 rounded border border-emerald-300">
+                            {sigSizeKb} KB (Asli)
+                          </span>
+                        ) : (
+                          <span className="text-[8px] font-bold text-amber-800 bg-amber-100/90 px-1 py-0.2 rounded border border-amber-300">
+                            TTD Cadangan
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setZoomedImage(visit.signatureUrl || '')}
+                        className="text-slate-400 hover:text-slate-700"
+                        title="Perbesar"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setZoomedImage(visit.signatureUrl || '')}
+                      className="relative w-full aspect-square rounded-lg overflow-hidden bg-white border border-slate-300 flex items-center justify-center p-1.5 cursor-pointer group"
+                    >
+                      <SafeVisitImage
                         src={visit.signatureUrl}
                         alt="Tanda Tangan"
+                        type="signature"
+                        visitorName={visit.name}
+                        visitNumber={visit.visitNumber}
                         className="w-full h-full object-contain group-hover:scale-105 transition"
                       />
-                    ) : (
-                      <span className="text-[10px] text-slate-400">Tidak ada tanda tangan</span>
-                    )}
+                    </div>
+                    <div className="text-[9px] font-mono text-slate-400 truncate mt-1">
+                      {visit.signatureFileName || 'tanda-tangan.png'}
+                    </div>
                   </div>
-                  <div className="text-[9px] font-mono text-slate-400 truncate">
-                    {visit.signatureFileName}
+
+                  {/* Upload / Restore Signature */}
+                  <div className="pt-1 border-t border-slate-200/80">
+                    <input
+                      type="file"
+                      ref={sigInputRef}
+                      accept="image/*"
+                      onChange={handleSigFileSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingSig}
+                      onClick={() => sigInputRef.current?.click()}
+                      className="w-full py-1 px-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-1 transition shadow-2xs"
+                    >
+                      <Upload className="w-2.5 h-2.5" />
+                      <span>{isUploadingSig ? 'Menyimpan...' : 'Ganti / Pulihkan TTD'}</span>
+                    </button>
                   </div>
                 </div>
               </div>

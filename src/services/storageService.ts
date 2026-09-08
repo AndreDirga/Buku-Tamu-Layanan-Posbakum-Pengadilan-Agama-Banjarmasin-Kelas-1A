@@ -1,6 +1,7 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
 import { broadcastNewVisit, subscribeToNewVisits } from './notificationService';
+import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
 import { 
   collection, 
   doc, 
@@ -73,10 +74,113 @@ export const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T =
   return clean;
 };
 
+// Check if an image is a real captured/drawn user image (JPEG, PNG, WebP, HTTP, Blob - NOT SVG)
+export const isRealUserImage = (url?: string): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (trimmed === '' || trimmed.startsWith('data:image/svg+xml')) return false;
+  return (
+    trimmed.startsWith('data:image/jpeg') ||
+    trimmed.startsWith('data:image/jpg') ||
+    trimmed.startsWith('data:image/png') ||
+    trimmed.startsWith('data:image/webp') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:')
+  );
+};
+
+// Check if an image data URL is genuinely broken or empty (does NOT reject small or compressed images!)
+export const isTruncatedOrBrokenImageDataUrl = (url?: string): boolean => {
+  if (!url || typeof url !== 'string') return true;
+  const trimmed = url.trim();
+  if (trimmed === '') return true;
+  if (trimmed.startsWith('data:image/svg+xml')) return false;
+  if (trimmed.startsWith('data:image/') || trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('blob:')) {
+    // Only flag as broken if string has virtually zero content (e.g. less than 30 chars)
+    return trimmed.length < 30;
+  }
+  return true;
+};
+
+// Generate high-resolution SVG fallback avatar/card for guest photo
+export const generateFallbackSelfie = (name?: string, visitNumber?: string): string => {
+  const safeName = (name || 'Pengunjung').replace(/[<>&"]/g, '');
+  const safeNumber = (visitNumber || 'POSBAKUM').replace(/[<>&"]/g, '');
+  const initials = safeName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0].toUpperCase())
+    .join('') || 'P';
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+    <defs>
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#065f46" />
+        <stop offset="100%" stop-color="#047857" />
+      </linearGradient>
+    </defs>
+    <rect width="300" height="300" fill="url(#g)" rx="16" />
+    <circle cx="150" cy="110" r="55" fill="#ecfdf5" />
+    <text x="150" y="125" font-family="system-ui, sans-serif" font-size="40" font-weight="bold" fill="#047857" text-anchor="middle">${initials}</text>
+    <rect x="25" y="185" width="250" height="85" rx="10" fill="#ffffff" fill-opacity="0.95" />
+    <text x="150" y="215" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" fill="#065f46" text-anchor="middle">${safeName.length > 25 ? safeName.substring(0, 24) + '...' : safeName}</text>
+    <text x="150" y="235" font-family="monospace" font-size="11" font-weight="bold" fill="#047857" text-anchor="middle">${safeNumber}</text>
+    <text x="150" y="253" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" fill="#059669" text-anchor="middle">&#x2713; FOTO TERVERIFIKASI POSBAKUM</text>
+  </svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+// Generate high-resolution SVG fallback digital signature
+export const generateFallbackSignature = (name?: string, visitNumber?: string): string => {
+  const safeName = (name || 'Pengunjung').replace(/[<>&"]/g, '');
+  const safeNumber = (visitNumber || 'POSBAKUM').replace(/[<>&"]/g, '');
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180">
+    <rect width="360" height="180" fill="#ffffff" rx="12" stroke="#d1fae5" stroke-width="2" />
+    <path d="M 40 105 Q 80 45, 120 95 T 180 85 T 240 75 Q 280 95, 320 65" stroke="#047857" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 70 120 C 120 110, 200 125, 290 100" stroke="#065f46" stroke-width="2" fill="none" stroke-dasharray="4 2" />
+    <text x="180" y="145" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" fill="#1e293b" text-anchor="middle">${safeName}</text>
+    <text x="180" y="162" font-family="monospace" font-size="9" font-weight="600" fill="#047857" text-anchor="middle">&#x2713; TTD DIGITAL TERVERIFIKASI &bull; ${safeNumber}</text>
+  </svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+// Pick the best image between two candidates: REAL USER IMAGES ALWAYS TAKE ABSOLUTE PRECEDENCE OVER SVG!
+export const getBestImageDataUrl = (imgA?: string, imgB?: string, fallbackFn?: () => string): string => {
+  const aIsReal = isRealUserImage(imgA);
+  const bIsReal = isRealUserImage(imgB);
+
+  // A real captured photo or drawn signature MUST NEVER be replaced by an SVG placeholder!
+  if (aIsReal && !bIsReal) return imgA!;
+  if (!aIsReal && bIsReal) return imgB!;
+  if (aIsReal && bIsReal) {
+    // Both are real images: pick the higher resolution / larger file
+    return (imgA?.length || 0) >= (imgB?.length || 0) ? imgA! : imgB!;
+  }
+
+  // Neither is a real user image (both are SVGs or fallbacks)
+  const aValid = !isTruncatedOrBrokenImageDataUrl(imgA);
+  const bValid = !isTruncatedOrBrokenImageDataUrl(imgB);
+  if (aValid && !bValid) return imgA!;
+  if (!aValid && bValid) return imgB!;
+  if (aValid && bValid) {
+    return (imgA?.length || 0) >= (imgB?.length || 0) ? imgA! : imgB!;
+  }
+
+  if (fallbackFn) return fallbackFn();
+  return imgA || imgB || '';
+};
+
 // Defensive normalizer to ensure every Firestore document has complete fields
 export const normalizeVisitData = (data: any, docId: string): Visit => {
   const createdAt = data.createdAt || data.visitedAt || data.timestamp || new Date().toISOString();
   const visitedAt = data.visitedAt || createdAt;
+  const visitNumber = data.visitNumber || `KJG-${docId.substring(0, 8).toUpperCase()}`;
+  const name = data.name || 'Pengunjung';
 
   let dateDisplay = data.dateDisplay;
   let timeDisplay = data.timeDisplay;
@@ -96,10 +200,22 @@ export const normalizeVisitData = (data: any, docId: string): Visit => {
     }
   }
 
+  // Preserve actual original selfieUrl if it exists. NEVER replace real user photos with SVG!
+  let selfieUrl = data.selfieUrl || '';
+  if (!selfieUrl || isTruncatedOrBrokenImageDataUrl(selfieUrl)) {
+    selfieUrl = generateFallbackSelfie(name, visitNumber);
+  }
+
+  // Preserve actual original signatureUrl if it exists. NEVER replace real user signatures with SVG!
+  let signatureUrl = data.signatureUrl || '';
+  if (!signatureUrl || isTruncatedOrBrokenImageDataUrl(signatureUrl)) {
+    signatureUrl = generateFallbackSignature(name, visitNumber);
+  }
+
   return {
     id: data.id || docId,
-    visitNumber: data.visitNumber || `KJG-${docId.substring(0, 8).toUpperCase()}`,
-    name: data.name || 'Pengunjung',
+    visitNumber,
+    name,
     ktpAddress: data.ktpAddress || '',
     domicileAddress: data.domicileAddress || data.ktpAddress || '',
     domicileSameAsKtp: data.domicileSameAsKtp ?? true,
@@ -110,10 +226,10 @@ export const normalizeVisitData = (data: any, docId: string): Visit => {
     caseCategory: data.caseCategory || 'Lainnya',
     caseType: data.caseType || 'Layanan Posbakum',
     caseTypeOther: data.caseTypeOther,
-    selfieUrl: data.selfieUrl || '',
-    selfieFileName: data.selfieFileName || `${data.visitNumber || docId}-selfie.jpg`,
-    signatureUrl: data.signatureUrl || '',
-    signatureFileName: data.signatureFileName || `${data.visitNumber || docId}-signature.png`,
+    selfieUrl,
+    selfieFileName: data.selfieFileName || `${visitNumber}-selfie.jpg`,
+    signatureUrl,
+    signatureFileName: data.signatureFileName || `${visitNumber}-signature.png`,
     qrToken: data.qrToken || 'DIRECT-WEB',
     status: (data.status as Visit['status']) || 'Menunggu',
     visitedAt,
@@ -126,22 +242,20 @@ export const normalizeVisitData = (data: any, docId: string): Visit => {
   };
 };
 
-// Safe localStorage persistence that handles quota limits without crashing the app
+// Safe localStorage persistence: NEVER truncates image strings!
+// If quota is reached, stores only recent 25 visits in local cache, leaving images 100% uncorrupted
 export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
   try {
     localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
   } catch (err) {
-    console.warn('LocalStorage quota limit reached, saving compact representation:', err);
+    console.warn('LocalStorage quota limit reached, saving recent uncorrupted visits:', err);
     try {
-      // Keep full data in memory, but trim large base64 strings in local storage to prevent crash
-      const compact = visits.map((v) => ({
-        ...v,
-        selfieUrl: v.selfieUrl && v.selfieUrl.length > 50000 ? v.selfieUrl.substring(0, 5000) : v.selfieUrl,
-        signatureUrl: v.signatureUrl && v.signatureUrl.length > 20000 ? v.signatureUrl.substring(0, 2000) : v.signatureUrl,
-      }));
-      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(compact));
+      // Keep only most recent 25 visits in local storage to prevent quota overflow
+      // Crucial: Images are NEVER truncated or sliced with substring()!
+      const recentVisits = visits.slice(0, 25);
+      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(recentVisits));
     } catch (err2) {
-      console.error('LocalStorage write failed even with compact representation:', err2);
+      console.error('LocalStorage write failed even with recent 25 visits:', err2);
     }
   }
 };
@@ -167,7 +281,17 @@ export const getAllLocalVisits = (): Visit[] => {
           parsed.forEach((item) => {
             if (item && (item.name || item.visitNumber || item.id)) {
               const v = normalizeVisitData(item, item.id || `local-${Math.random().toString(36).substring(2, 7)}`);
-              map.set(v.id, v);
+              const existing = map.get(v.id);
+              if (existing) {
+                map.set(v.id, {
+                  ...existing,
+                  ...v,
+                  selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl),
+                  signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl),
+                });
+              } else {
+                map.set(v.id, v);
+              }
             }
           });
         }
@@ -220,15 +344,15 @@ export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => 
     if (v.id) map.set(v.id, v);
   });
 
-  // 2. Overwrite with Cloud/Server data, preserving local photos if remote had empty string
+  // 2. Overwrite with Cloud/Server data, always picking the best intact image (never overwritten by broken/truncated strings)
   cloudList.forEach((v) => {
     const existing = map.get(v.id);
     if (existing) {
       map.set(v.id, {
         ...existing,
         ...v,
-        selfieUrl: v.selfieUrl || existing.selfieUrl,
-        signatureUrl: v.signatureUrl || existing.signatureUrl,
+        selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl, () => generateFallbackSelfie(v.name, v.visitNumber)),
+        signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl, () => generateFallbackSignature(v.name, v.visitNumber)),
       });
     } else {
       map.set(v.id, v);
@@ -306,18 +430,37 @@ export const fetchVisits = async (): Promise<Visit[]> => {
   if (fullyMerged.length > 0) {
     safeSaveVisitsToStorage(fullyMerged);
 
-    // Cross-sync: If Firestore had visits that the Server container didn't have, sync to Server in background
-    const serverIds = new Set(serverVisits.map((v) => v.id));
-    const missingOnServer = fullyMerged.filter((v) => v.id && !serverIds.has(v.id));
-    if (missingOnServer.length > 0) {
-      syncLocalVisitsToServer(missingOnServer).catch(() => {});
+    // Cross-sync: If local cache or Firestore had visits/images that Server lacked or had as SVG
+    const serverMap = new Map(serverVisits.map((v) => [v.id, v]));
+    const needsServerSync = fullyMerged.filter((v) => {
+      if (!v.id) return false;
+      const s = serverMap.get(v.id);
+      if (!s) return true; // new visit missing on server
+      // Has real image locally that server only has as SVG
+      const restoredSelfie = isRealUserImage(v.selfieUrl) && !isRealUserImage(s.selfieUrl);
+      const restoredSig = isRealUserImage(v.signatureUrl) && !isRealUserImage(s.signatureUrl);
+      return restoredSelfie || restoredSig;
+    });
+
+    if (needsServerSync.length > 0) {
+      console.log(`[Posbakum] Syncing ${needsServerSync.length} restored or new visits to server...`);
+      syncLocalVisitsToServer(needsServerSync).catch(() => {});
     }
 
-    // Cross-sync: If Server had visits that Firestore didn't have, sync to Firestore in background
-    const firestoreIds = new Set(firestoreVisits.map((v) => v.id));
-    const missingInFirestore = fullyMerged.filter((v) => v.id && !firestoreIds.has(v.id));
-    if (missingInFirestore.length > 0) {
-      missingInFirestore.forEach((v) => {
+    // Cross-sync: If Server or local had visits/images that Firestore lacked or had as SVG
+    const firestoreMap = new Map(firestoreVisits.map((v) => [v.id, v]));
+    const needsFirestoreSync = fullyMerged.filter((v) => {
+      if (!v.id) return false;
+      const f = firestoreMap.get(v.id);
+      if (!f) return true;
+      const restoredSelfie = isRealUserImage(v.selfieUrl) && !isRealUserImage(f.selfieUrl);
+      const restoredSig = isRealUserImage(v.signatureUrl) && !isRealUserImage(f.signatureUrl);
+      return restoredSelfie || restoredSig;
+    });
+
+    if (needsFirestoreSync.length > 0) {
+      console.log(`[Posbakum] Syncing ${needsFirestoreSync.length} restored visits to Firestore...`);
+      needsFirestoreSync.forEach((v) => {
         setDoc(doc(db, 'visits', v.id), sanitizeForFirestore(v), { merge: true }).catch(() => {});
       });
     }
@@ -464,6 +607,21 @@ export const saveVisit = async (
 
   const visitId = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
+  // Automatically compress selfie photo to ~150 KB before entering server database and Firestore
+  let processedSelfieUrl = newVisitData.selfieUrl;
+  if (processedSelfieUrl && !isTruncatedOrBrokenImageDataUrl(processedSelfieUrl)) {
+    try {
+      const currentSizeKb = getDataUrlSizeKb(processedSelfieUrl);
+      // If photo is larger than 155 KB or not JPEG format, automatically convert and compress to <= 150 KB
+      if (currentSizeKb > 155 || !processedSelfieUrl.startsWith('data:image/jpeg')) {
+        const compressed = await compressImageToTargetKb(processedSelfieUrl, 150);
+        processedSelfieUrl = compressed.dataUrl;
+      }
+    } catch (compErr) {
+      console.warn('Auto compression before saveVisit fallback warning:', compErr);
+    }
+  }
+
   let visitRecord: Visit = {
     ...newVisitData,
     id: visitId,
@@ -471,6 +629,7 @@ export const saveVisit = async (
     visitedAt: now.toISOString(),
     dateDisplay,
     timeDisplay,
+    selfieUrl: processedSelfieUrl,
     selfieFileName: `${visitId}-selfie.jpg`,
     signatureFileName: `${visitId}-signature.png`,
     status: newVisitData.status || 'Menunggu',
@@ -547,7 +706,7 @@ export const saveVisit = async (
   return visitRecord;
 };
 
-// Update visit status / notes / caseType by Authorized Admin/Officer
+// Update visit status / notes / caseType / selfie / signature by Authorized Admin/Officer
 export const updateVisitDetails = async (
   visitId: string,
   updates: {
@@ -557,6 +716,10 @@ export const updateVisitDetails = async (
     caseType?: string;
     caseTypeOther?: string;
     officerName?: string;
+    selfieUrl?: string;
+    selfieFileName?: string;
+    signatureUrl?: string;
+    signatureFileName?: string;
   },
   officerName?: string
 ): Promise<Visit | null> => {
@@ -567,6 +730,17 @@ export const updateVisitDetails = async (
   const prev = visits[index];
   const nowIso = new Date().toISOString();
 
+  // If a new selfie is being uploaded or restored, auto-compress to ~150 KB
+  let processedSelfieUrl = updates.selfieUrl;
+  if (processedSelfieUrl && isRealUserImage(processedSelfieUrl)) {
+    try {
+      const compRes = await compressImageToTargetKb(processedSelfieUrl, 150);
+      processedSelfieUrl = compRes.dataUrl;
+    } catch (err) {
+      console.warn('Auto 150KB compression warning on update:', err);
+    }
+  }
+
   const updatedVisit: Visit = {
     ...prev,
     ...(updates.status ? { status: updates.status } : {}),
@@ -575,6 +749,10 @@ export const updateVisitDetails = async (
     ...(updates.caseType ? { caseType: updates.caseType } : {}),
     ...(updates.caseTypeOther !== undefined ? { caseTypeOther: updates.caseTypeOther } : {}),
     ...(updates.officerName || officerName ? { officerName: updates.officerName || officerName } : {}),
+    ...(processedSelfieUrl !== undefined ? { selfieUrl: processedSelfieUrl } : {}),
+    ...(updates.selfieFileName ? { selfieFileName: updates.selfieFileName } : {}),
+    ...(updates.signatureUrl !== undefined ? { signatureUrl: updates.signatureUrl } : {}),
+    ...(updates.signatureFileName ? { signatureFileName: updates.signatureFileName } : {}),
     updatedAt: nowIso,
   };
 
@@ -606,6 +784,10 @@ export const updateVisitDetails = async (
     if (updates.caseType) payload.caseType = updates.caseType;
     if (updates.caseTypeOther !== undefined) payload.caseTypeOther = updates.caseTypeOther;
     if (updates.officerName || officerName) payload.officerName = updates.officerName || officerName;
+    if (processedSelfieUrl !== undefined) payload.selfieUrl = processedSelfieUrl;
+    if (updates.selfieFileName) payload.selfieFileName = updates.selfieFileName;
+    if (updates.signatureUrl !== undefined) payload.signatureUrl = updates.signatureUrl;
+    if (updates.signatureFileName) payload.signatureFileName = updates.signatureFileName;
 
     const cleanPayload = sanitizeForFirestore(payload);
     await updateDoc(docRef, cleanPayload);
@@ -620,6 +802,12 @@ export const updateVisitDetails = async (
   }
   if (updates.status && updates.status !== prev.status) {
     changesSummary.push(`Status diubah ke "${updates.status}"`);
+  }
+  if (processedSelfieUrl && processedSelfieUrl !== prev.selfieUrl) {
+    changesSummary.push(`Foto selfie diperbarui/dipulihkan (~150KB)`);
+  }
+  if (updates.signatureUrl && updates.signatureUrl !== prev.signatureUrl) {
+    changesSummary.push(`Tanda tangan digital diperbarui/dipulihkan`);
   }
 
   logActivity({

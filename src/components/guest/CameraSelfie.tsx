@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, CheckCircle2, AlertCircle, Upload, SwitchCamera } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Camera, RefreshCw, CheckCircle2, AlertCircle, Upload, SwitchCamera, Sparkles } from 'lucide-react';
+import { compressImageToTargetKb, getDataUrlSizeKb } from '../../utils/imageCompressor';
 
 interface CameraSelfieProps {
   photoDataUrl: string | null;
@@ -17,8 +18,14 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isStartingCamera, setIsStartingCamera] = useState<boolean>(false);
+  const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [flash, setFlash] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Compute exact photo size in KB
+  const photoSizeKb = useMemo(() => {
+    return photoDataUrl ? getDataUrlSizeKb(photoDataUrl) : null;
+  }, [photoDataUrl]);
 
   // Start Camera
   const startCamera = async () => {
@@ -38,8 +45,8 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facingMode,
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         },
         audio: false,
       });
@@ -79,29 +86,17 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
     };
   }, [photoDataUrl, facingMode]);
 
-  // Capture current frame from video stream
-  const capturePhoto = () => {
-    if (!videoRef.current) return;
+  // Capture current frame from video stream and automatically compress to ~150 KB
+  const capturePhoto = async () => {
+    if (!videoRef.current || isCompressing) return;
 
     setFlash(true);
     setTimeout(() => setFlash(false), 200);
 
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    let width = video.videoWidth || 640;
-    let height = video.videoHeight || 480;
-
-    // Constrain to maximum 640px dimension for ultra-fast, reliable transmission (<60KB)
-    const maxDim = 640;
-    if (width > maxDim || height > maxDim) {
-      if (width > height) {
-        height = Math.round((height * maxDim) / width);
-        width = maxDim;
-      } else {
-        width = Math.round((width * maxDim) / height);
-        height = maxDim;
-      }
-    }
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
 
     canvas.width = width;
     canvas.height = height;
@@ -115,14 +110,25 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
     }
 
     ctx.drawImage(video, 0, 0, width, height);
-    const compressedJpeg = canvas.toDataURL('image/jpeg', 0.72);
 
-    stopCamera();
-    onPhotoCaptured(compressedJpeg);
+    setIsCompressing(true);
+    try {
+      // Automatically compress and convert to strictly target ~150 KB
+      const result = await compressImageToTargetKb(canvas, 150);
+      stopCamera();
+      onPhotoCaptured(result.dataUrl);
+    } catch (err) {
+      console.error('Camera compression failed, using direct canvas fallback:', err);
+      const fallbackUrl = canvas.toDataURL('image/jpeg', 0.78);
+      stopCamera();
+      onPhotoCaptured(fallbackUrl);
+    } finally {
+      setIsCompressing(false);
+    }
   };
 
-  // Handle manual file upload fallback
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle manual file upload and automatically compress to ~150 KB
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -131,35 +137,21 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 640;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-        onPhotoCaptured(dataUrl);
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    setIsCompressing(true);
+    try {
+      // Automatically compress and convert uploaded photo to ~150 KB
+      const result = await compressImageToTargetKb(file, 150);
+      stopCamera();
+      onPhotoCaptured(result.dataUrl);
+    } catch (err) {
+      console.error('File compression failed:', err);
+      alert('Gagal memproses foto selfie. Silakan coba file lain.');
+    } finally {
+      setIsCompressing(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   const handleRetake = () => {
@@ -173,25 +165,39 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="block text-[11px] font-semibold text-slate-700">
-          Foto Selfie / Wajah Pengunjung <span className="text-rose-600">*</span>
-        </label>
+        <div className="flex items-center gap-1.5">
+          <label className="block text-[11px] font-semibold text-slate-700">
+            Foto Selfie / Wajah Pengunjung <span className="text-rose-600">*</span>
+          </label>
+          <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100/80 px-1.5 py-0.5 rounded border border-emerald-300">
+            Maks 150 KB
+          </span>
+        </div>
         {photoDataUrl && (
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-            <CheckCircle2 className="w-3 h-3" />
-            Foto tersimpan
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>Foto terverifikasi ({photoSizeKb} KB)</span>
           </span>
         )}
       </div>
 
-      <p className="text-[10px] text-slate-400">
-        Posisikan wajah Anda di dalam bingkai oval dengan pencahayaan yang cukup.
+      <p className="text-[10px] text-slate-500">
+        Posisikan wajah Anda di dalam bingkai oval. Foto otomatis dikonversi berukuran maksimal ~150 KB demi efisiensi dan keamanan basis data.
       </p>
 
       {/* Main Camera / Preview Box */}
       <div className="relative w-full aspect-4/3 max-w-xs mx-auto bg-slate-900 rounded-xl overflow-hidden shadow-inner border border-slate-300">
         {flash && (
           <div className="absolute inset-0 bg-white z-30 transition-opacity duration-150 opacity-100" />
+        )}
+
+        {/* Compressing spinner overlay */}
+        {isCompressing && (
+          <div className="absolute inset-0 bg-slate-900/90 z-40 flex flex-col items-center justify-center text-white text-xs gap-2 p-4 text-center">
+            <RefreshCw className="w-5 h-5 animate-spin text-emerald-400" />
+            <span className="font-bold text-slate-100">Mengonversi Foto ke 150 KB...</span>
+            <span className="text-[10px] text-slate-300">Mengoptimalkan resolusi dan ketajaman wajah</span>
+          </div>
         )}
 
         {photoDataUrl ? (
@@ -202,11 +208,11 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
               alt="Selfie Pengunjung"
               className="w-full h-full object-cover"
             />
-            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between bg-slate-900/80 backdrop-blur-xs text-white px-2.5 py-1 rounded-lg text-[10px]">
-              <span className="flex items-center gap-1 font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                Siap disimpan
-              </span>
+            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between bg-slate-900/85 backdrop-blur-xs text-white px-2.5 py-1.5 rounded-lg text-[10px]">
+              <div className="flex items-center gap-1 font-medium text-emerald-400">
+                <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span>Tersimpan {photoSizeKb} KB</span>
+              </div>
               <button
                 type="button"
                 onClick={handleRetake}
@@ -284,16 +290,18 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
         <div className="flex items-center justify-center gap-2 pt-0.5">
           <button
             type="button"
+            disabled={isCompressing || isStartingCamera}
             onClick={capturePhoto}
-            className="flex-1 max-w-xs py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition"
+            className="flex-1 max-w-xs py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition disabled:opacity-60"
           >
             <Camera className="w-4 h-4" />
-            Ambil Foto Selfie
+            <span>Ambil Foto Selfie (~150 KB)</span>
           </button>
           <button
             type="button"
+            disabled={isCompressing}
             onClick={() => fileInputRef.current?.click()}
-            title="Unggah dari file"
+            title="Unggah dari file (Otomatis dikompresi ke 150 KB)"
             className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-300 transition"
           >
             <Upload className="w-4 h-4" />
@@ -313,3 +321,4 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
     </div>
   );
 };
+

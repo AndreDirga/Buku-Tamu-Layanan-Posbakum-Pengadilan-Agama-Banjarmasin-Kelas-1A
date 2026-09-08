@@ -239,6 +239,34 @@ try {
   console.warn('[Server Firestore] Init warning:', e.message);
 }
 
+// Helper to check if an image is a real captured/drawn user image (JPEG, PNG, WebP, HTTP, Blob - NOT SVG)
+function isRealUserImage(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (trimmed === '' || trimmed.startsWith('data:image/svg+xml')) return false;
+  return (
+    trimmed.startsWith('data:image/jpeg') ||
+    trimmed.startsWith('data:image/jpg') ||
+    trimmed.startsWith('data:image/png') ||
+    trimmed.startsWith('data:image/webp') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:')
+  );
+}
+
+// Pick the best image: real user captured/drawn image ALWAYS wins over an SVG placeholder!
+function pickBestImage(imgA?: string, imgB?: string): string {
+  const aReal = isRealUserImage(imgA);
+  const bReal = isRealUserImage(imgB);
+  if (aReal && !bReal) return imgA!;
+  if (!aReal && bReal) return imgB!;
+  if (aReal && bReal) {
+    return (imgA?.length || 0) >= (imgB?.length || 0) ? imgA! : imgB!;
+  }
+  return imgA || imgB || '';
+}
+
 // Background sync from Cloud Firestore into server cache
 async function syncServerWithFirestore() {
   if (!serverFirestoreDb) return;
@@ -261,8 +289,14 @@ async function syncServerWithFirestore() {
           const localDoc = currentMap.get(id);
           const localTime = new Date(localDoc.updatedAt || localDoc.visitedAt || 0).getTime();
           const fsTime = new Date(fsDoc.updatedAt || fsDoc.visitedAt || 0).getTime();
-          if (fsTime > localTime) {
-            currentMap.set(id, { ...localDoc, ...fsDoc });
+          
+          // Real user images are always preserved; never let an SVG overwrite a real photo/signature
+          const selfie = pickBestImage(fsDoc.selfieUrl, localDoc.selfieUrl);
+          const sig = pickBestImage(fsDoc.signatureUrl, localDoc.signatureUrl);
+
+          const hasImageImprovement = (selfie && selfie !== localDoc.selfieUrl) || (sig && sig !== localDoc.signatureUrl);
+          if (fsTime > localTime || hasImageImprovement) {
+            currentMap.set(id, { ...localDoc, ...fsDoc, selfieUrl: selfie, signatureUrl: sig });
             hasChanges = true;
           }
         }
@@ -470,9 +504,11 @@ app.post('/api/visits/sync', (req, res) => {
         addedCount++;
         map.set(key, v);
       } else {
-        // Update if existing
+        // Update if existing without destroying valid real user images
         const existing = map.get(key);
-        map.set(key, { ...existing, ...v });
+        const selfie = pickBestImage(v.selfieUrl, existing.selfieUrl);
+        const sig = pickBestImage(v.signatureUrl, existing.signatureUrl);
+        map.set(key, { ...existing, ...v, selfieUrl: selfie, signatureUrl: sig });
       }
     });
 
