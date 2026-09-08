@@ -192,7 +192,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Google Sheets (Cloud)</span>
+            <span>Google Drive & Sheets (Otomatis & Unduh)</span>
           </button>
           <button
             type="button"

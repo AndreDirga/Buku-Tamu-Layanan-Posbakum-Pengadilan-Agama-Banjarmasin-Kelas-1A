@@ -363,6 +363,24 @@ export const saveVisit = async (
   // 4. Real-time notification trigger for admin dashboard & other open tabs
   broadcastNewVisit(visitRecord);
 
+  // 5. Automatic Daily Sync to Admin Google Drive (gdriveandria1@gmail.com)
+  try {
+    import('./googleDriveAdminService').then(({ isGDriveAutoSyncEnabled, getStoredGDriveAuth, syncDailyVisitsToGDrive }) => {
+      if (isGDriveAutoSyncEnabled()) {
+        const authInfo = getStoredGDriveAuth();
+        if (authInfo?.accessToken) {
+          const todayISO = now.toISOString().substring(0, 10);
+          const visitsToday = updated.filter(v => (v.visitedAt || v.createdAt || '').substring(0, 10) === todayISO);
+          syncDailyVisitsToGDrive(todayISO, visitsToday).catch((e) => {
+            console.warn('Background auto-sync to Google Drive error:', e);
+          });
+        }
+      }
+    }).catch(() => {});
+  } catch (e) {
+    console.warn('Could not initiate Google Drive background sync:', e);
+  }
+
   return visitRecord;
 };
 
