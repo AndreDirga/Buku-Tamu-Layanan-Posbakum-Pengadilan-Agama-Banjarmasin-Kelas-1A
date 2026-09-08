@@ -48,10 +48,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   // 100% Dynamic KPI Calculations from Real Visits
   const stats = useMemo(() => {
+    const checkDateMatch = (v: Visit, prefix: string) => {
+      const dt = v.visitedAt || v.createdAt || '';
+      return dt.startsWith(prefix);
+    };
+
     const total = visits.length;
-    const todayCount = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(todayYMD)).length;
-    const monthCount = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(thisMonthYM)).length;
-    const yearCount = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(String(currentYear))).length;
+    const todayCount = visits.filter((v) => checkDateMatch(v, todayYMD)).length;
+    const monthCount = visits.filter((v) => checkDateMatch(v, thisMonthYM)).length;
+    const yearCount = visits.filter((v) => checkDateMatch(v, String(currentYear))).length;
 
     // Case types breakdown
     const caseMap: Record<string, number> = {};

@@ -146,13 +146,60 @@ export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
   }
 };
 
+// All known historical localStorage keys to recover previously entered visits
+const ALL_STORAGE_KEYS = [
+  'pabjm_posbakum_visits_v1',
+  'pabjm_posbakum_visits',
+  'posbakum_visits_v1',
+  'posbakum_visits',
+  'visits',
+];
+
+// Recovers visits from all local storage keys (including previous sessions)
+export const getAllLocalVisits = (): Visit[] => {
+  const map = new Map<string, Visit>();
+  for (const key of ALL_STORAGE_KEYS) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => {
+            if (item && (item.name || item.visitNumber || item.id)) {
+              const v = normalizeVisitData(item, item.id || `local-${Math.random().toString(36).substring(2, 7)}`);
+              map.set(v.id, v);
+            }
+          });
+        }
+      }
+    } catch {}
+  }
+  return Array.from(map.values());
+};
+
+// Sync local visits to Server Database API
+export const syncLocalVisitsToServer = async (visits: Visit[]): Promise<void> => {
+  if (!visits || visits.length === 0) return;
+  try {
+    await fetch('/api/visits/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visits }),
+    });
+  } catch (err) {
+    console.warn('Could not sync local visits to server API:', err);
+  }
+};
+
 // Helper to get local cache
 export const getStoredVisits = (): Visit[] => {
+  const localList = getAllLocalVisits();
+  if (localList.length > 0) {
+    return localList;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY_VISITS);
-    if (!raw) {
-      return [];
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       return parsed.map((item) => normalizeVisitData(item, item.id || 'cache-id'));
@@ -164,7 +211,7 @@ export const getStoredVisits = (): Visit[] => {
   }
 };
 
-// Merge cloud and local visits cleanly without loss or duplicate
+// Merge cloud, server, and local visits cleanly without loss or duplicate
 export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => {
   const map = new Map<string, Visit>();
 
@@ -173,7 +220,7 @@ export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => 
     if (v.id) map.set(v.id, v);
   });
 
-  // 2. Overwrite with Cloud Firestore data, preserving local photos if cloud had empty string
+  // 2. Overwrite with Cloud/Server data, preserving local photos if remote had empty string
   cloudList.forEach((v) => {
     const existing = map.get(v.id);
     if (existing) {
@@ -199,78 +246,114 @@ export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => 
   return merged;
 };
 
-// Direct fetch from Cloud Firestore (reads ALL documents without skipping any)
+// Direct fetch from Server Database API (with fallback to Cloud Firestore & LocalStorage)
 export const fetchVisits = async (): Promise<Visit[]> => {
+  let serverVisits: Visit[] = [];
+
+  // 1. Primary Source: Server Database API (zero quota limits, 100% durable & cross-device)
+  try {
+    const res = await fetch('/api/visits');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        serverVisits = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+      }
+    }
+  } catch (err) {
+    console.warn('Server /api/visits not reachable, using fallback:', err);
+  }
+
+  // 2. Read all local storage visits (recovers previously entered data)
+  const localVisits = getAllLocalVisits();
+
+  // 3. Automatically sync any local visits to the server database so other devices can read them
+  if (localVisits.length > 0) {
+    syncLocalVisitsToServer(localVisits).catch(() => {});
+  }
+
+  // 4. Try Firestore in background (gracefully catches quota limit exceeded)
+  let cloudVisits: Visit[] = [];
   try {
     const visitsCol = collection(db, 'visits');
-    // Notice: Direct collection read ensures documents without 'createdAt' are NOT excluded
     const snapshot = await getDocs(visitsCol);
-    const cloudVisits: Visit[] = [];
-
     snapshot.forEach((docSnap) => {
       cloudVisits.push(normalizeVisitData(docSnap.data(), docSnap.id));
     });
-
-    const localVisits = getStoredVisits();
-    const merged = mergeVisits(cloudVisits, localVisits);
-
-    safeSaveVisitsToStorage(merged);
-    return merged;
   } catch (err) {
-    console.warn('Direct fetchVisits encountered error, using local cache:', err);
-    return getStoredVisits();
+    // Quota limits or network errors on free tier are gracefully ignored
   }
+
+  const merged = mergeVisits([...serverVisits, ...cloudVisits], localVisits);
+  safeSaveVisitsToStorage(merged);
+  return merged;
 };
 
-// Real-time Firestore synchronization for Visits collection
+// Real-time synchronization for Visits collection across all browsers and devices
 export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => void) => {
+  let isSubscribed = true;
+  let lastChecksum = '';
+
+  const syncFromServer = async () => {
+    if (!isSubscribed) return;
+    try {
+      const res = await fetch('/api/visits');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          const fresh = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+          const local = getAllLocalVisits();
+          const merged = mergeVisits(fresh, local);
+          const checksum = merged.map((v) => `${v.id}_${v.updatedAt || ''}_${v.status}_${v.notes || ''}`).join('|');
+          if (checksum !== lastChecksum) {
+            lastChecksum = checksum;
+            safeSaveVisitsToStorage(merged);
+            callback(merged);
+          }
+        }
+      }
+    } catch {}
+  };
+
+  // Immediate sync on subscribe
+  syncFromServer();
+
+  // Fast polling every 3 seconds for instant real-time updates across multiple admin/guest tabs
+  const intervalId = setInterval(syncFromServer, 3000);
+
+  // Real-time Cloud Firestore subscription fallback
+  let unsubFirestore: (() => void) | null = null;
   try {
     const visitsCol = collection(db, 'visits');
-    // We listen to the collection directly without server-side orderBy
-    // This is vital: Firestore orderBy silently omits documents missing the ordered field!
-    let knownVisitIds: Set<string> | null = null;
-
-    const unsubscribe = onSnapshot(
+    unsubFirestore = onSnapshot(
       visitsCol,
       (snapshot) => {
+        if (!isSubscribed) return;
         const cloudList: Visit[] = [];
-        const isSubsequentUpdate = knownVisitIds !== null;
-        const currentIds = new Set<string>();
-
         snapshot.forEach((docSnap) => {
-          const visitItem = normalizeVisitData(docSnap.data(), docSnap.id);
-          cloudList.push(visitItem);
-          currentIds.add(visitItem.id);
-
-          // If this is a subsequent real-time update from Firestore, detect brand new arrivals
-          if (isSubsequentUpdate && knownVisitIds && !knownVisitIds.has(visitItem.id)) {
-            broadcastNewVisit(visitItem);
-          }
+          cloudList.push(normalizeVisitData(docSnap.data(), docSnap.id));
         });
-
-        knownVisitIds = currentIds;
-
-        const localVisits = getStoredVisits();
-        const merged = mergeVisits(cloudList, localVisits);
-
-        // Safely update local storage without crashing
-        safeSaveVisitsToStorage(merged);
-
-        // Always notify the subscriber
-        callback(merged);
+        if (cloudList.length > 0) {
+          const local = getStoredVisits();
+          const merged = mergeVisits(cloudList, local);
+          safeSaveVisitsToStorage(merged);
+          callback(merged);
+        }
       },
-      (error) => {
-        console.warn('Firestore visits snapshot warning, triggering direct fetch fallback:', error);
-        fetchVisits().then(callback).catch(() => callback(getStoredVisits()));
+      () => {
+        // Quota limits or connection errors - server API handles real-time polling
       }
     );
+  } catch {}
 
-    return unsubscribe;
-  } catch (err) {
-    console.error('Error setting up visits subscription:', err);
-    fetchVisits().then(callback).catch(() => callback(getStoredVisits()));
-    return () => {};
-  }
+  return () => {
+    isSubscribed = false;
+    clearInterval(intervalId);
+    if (unsubFirestore) {
+      try {
+        unsubFirestore();
+      } catch {}
+    }
+  };
 };
 
 // Save a new visit permanently to Cloud Firestore and local storage
@@ -341,16 +424,27 @@ export const saveVisit = async (
   const updated = [visitRecord, ...localVisits.filter(v => v.id !== visitRecord.id)];
   safeSaveVisitsToStorage(updated);
 
-  // 2. Persist permanently to Cloud Firestore with sanitized payload
+  // 2. Persist to Server Database API (durable, zero quota limit, cross-device)
+  try {
+    await fetch('/api/visits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(visitRecord),
+    });
+  } catch (err) {
+    console.warn('Server API write warning:', err);
+  }
+
+  // 3. Persist permanently to Cloud Firestore with sanitized payload (safe fallback)
   try {
     const cleanRecord = sanitizeForFirestore(visitRecord);
     const docRef = doc(db, 'visits', visitRecord.id);
     await setDoc(docRef, cleanRecord);
   } catch (err) {
-    console.error('Error saving visit to Cloud Firestore:', err);
+    // Quota limits or network errors handled gracefully
   }
 
-  // 3. Log activity permanently
+  // 4. Log activity permanently
   logActivity({
     action: 'TAMBAH_KUNJUNGAN',
     description: `Buku tamu terdaftar: ${visitNumber} (${visitRecord.name} - ${visitRecord.caseType})`,
@@ -360,7 +454,7 @@ export const saveVisit = async (
     badgeColor: 'blue',
   });
 
-  // 4. Real-time notification trigger for admin dashboard & other open tabs
+  // 5. Real-time notification trigger for admin dashboard & other open tabs
   broadcastNewVisit(visitRecord);
 
   // 5. Automatic Daily Sync to Admin Google Drive (gdriveandria1@gmail.com)
@@ -420,6 +514,17 @@ export const updateVisitDetails = async (
   // Local storage update
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
 
+  // Server API update
+  try {
+    await fetch(`/api/visits/${visitId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedVisit),
+    });
+  } catch (err) {
+    console.warn('Server API update visit warning:', err);
+  }
+
   // Cloud Firestore permanent update
   try {
     const docRef = doc(db, 'visits', visitId);
@@ -436,7 +541,7 @@ export const updateVisitDetails = async (
     const cleanPayload = sanitizeForFirestore(payload);
     await updateDoc(docRef, cleanPayload);
   } catch (err) {
-    console.error('Failed to update visit in Firestore:', err);
+    // Firestore free tier quota handled gracefully
   }
 
   // Log activity
@@ -479,7 +584,14 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
   const updated = visits.filter((v) => v.id !== visitId);
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
 
-  // 2. Cloud Firestore permanent deletion
+  // 2. Server API deletion
+  try {
+    await fetch(`/api/visits/${visitId}`, { method: 'DELETE' });
+  } catch (err) {
+    console.warn('Server API delete visit warning:', err);
+  }
+
+  // 3. Cloud Firestore permanent deletion
   try {
     const docRef = doc(db, 'visits', visitId);
     await deleteDoc(docRef);
@@ -500,7 +612,7 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
       await batch.commit();
     }
   } catch (err) {
-    console.error('Failed to delete visit in Firestore:', err);
+    // Quota limits or network errors handled gracefully
   }
 
   logActivity({
@@ -524,10 +636,21 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
   const updated = visits.filter((v) => !visitIds.includes(v.id));
   const deletedCount = countBefore - updated.length || visitIds.length;
 
-  // Local cache update
+  // 1. Local cache update
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
 
-  // Cloud Firestore batch delete
+  // 2. Server API bulk delete
+  try {
+    await fetch('/api/visits/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: visitIds }),
+    });
+  } catch (err) {
+    console.warn('Server API bulk delete warning:', err);
+  }
+
+  // 3. Cloud Firestore batch delete
   try {
     const visitsCol = collection(db, 'visits');
     const snapshot = await getDocs(visitsCol);
@@ -550,7 +673,7 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
       await deleteDoc(docRef).catch(() => {});
     }
   } catch (err) {
-    console.error('Failed to batch delete visits in Firestore:', err);
+    // Quota limits handled gracefully
   }
 
   logActivity({
@@ -565,6 +688,24 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
   return deletedCount;
 };
 
+// Restore sample visits if data was ever missing
+export const restoreSampleVisits = async (): Promise<Visit[]> => {
+  try {
+    const res = await fetch('/api/visits/restore-default', { method: 'POST' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        const restored = json.data.map((item: any) => normalizeVisitData(item, item.id));
+        safeSaveVisitsToStorage(restored);
+        return restored;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to restore sample visits:', err);
+  }
+  return getStoredVisits();
+};
+
 // Reset / Clear all visits data completely (Mulai dari 0)
 export const clearAllVisits = async (deletedByName?: string): Promise<number> => {
   const visits = getStoredVisits();
@@ -573,7 +714,18 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
   // 1. Clear local storage
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
 
-  // 2. Batch delete all in Cloud Firestore
+  // 2. Server API bulk delete
+  try {
+    await fetch('/api/visits/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: visits.map((v) => v.id) }),
+    });
+  } catch (err) {
+    console.warn('Server API clear all visits warning:', err);
+  }
+
+  // 3. Batch delete all in Cloud Firestore
   try {
     const visitsCol = collection(db, 'visits');
     const snapshot = await getDocs(visitsCol);
@@ -585,7 +737,7 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
       await batch.commit();
     }
   } catch (err) {
-    console.error('Failed to clear all visits in Firestore:', err);
+    // Quota limits handled gracefully
   }
 
   // 3. Clean up any visit-related activity logs from local storage

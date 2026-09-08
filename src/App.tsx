@@ -162,6 +162,7 @@ export default function App() {
   const handleSelectOfficer = () => {
     if (currentOfficer) {
       setCurrentView('admin');
+      refreshVisits();
     } else {
       setCurrentView('login');
     }
@@ -246,6 +247,7 @@ export default function App() {
           onLoginSuccess={(officer) => {
             setCurrentOfficer(officer);
             setCurrentView('admin');
+            refreshVisits();
           }}
           onBackToGuest={() => setCurrentView('portal')}
         />
