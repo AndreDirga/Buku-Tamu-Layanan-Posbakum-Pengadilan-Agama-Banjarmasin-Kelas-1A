@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
+import { initializeApp as initFirebaseApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 const app = express();
 const PORT = 3000;
@@ -223,6 +225,70 @@ function saveLogsToDisk(logs: any[]): void {
 // In-memory cache synced with disk
 let visitsCache: any[] = readVisitsFromDisk();
 
+// Cloud Firestore initialization in server for multi-instance & multi-computer real-time data sync
+let serverFirestoreDb: any = null;
+try {
+  const configPath = path.join(process.cwd(), 'src', 'firebase-config.json');
+  if (fs.existsSync(configPath)) {
+    const fbConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const serverFbApp = initFirebaseApp(fbConfig, 'server-app');
+    serverFirestoreDb = getFirestore(serverFbApp, fbConfig.firestoreDatabaseId);
+    console.log('[Server Firestore] Initialized with databaseId:', fbConfig.firestoreDatabaseId);
+  }
+} catch (e: any) {
+  console.warn('[Server Firestore] Init warning:', e.message);
+}
+
+// Background sync from Cloud Firestore into server cache
+async function syncServerWithFirestore() {
+  if (!serverFirestoreDb) return;
+  try {
+    const snap = await getDocs(collection(serverFirestoreDb, 'visits'));
+    if (!snap.empty) {
+      const fsMap = new Map<string, any>();
+      snap.forEach((d) => {
+        fsMap.set(d.id, d.data());
+      });
+
+      let hasChanges = false;
+      const currentMap = new Map<string, any>(visitsCache.map((v) => [v.id, v]));
+
+      for (const [id, fsDoc] of fsMap.entries()) {
+        if (!currentMap.has(id)) {
+          currentMap.set(id, fsDoc);
+          hasChanges = true;
+        } else {
+          const localDoc = currentMap.get(id);
+          const localTime = new Date(localDoc.updatedAt || localDoc.visitedAt || 0).getTime();
+          const fsTime = new Date(fsDoc.updatedAt || fsDoc.visitedAt || 0).getTime();
+          if (fsTime > localTime) {
+            currentMap.set(id, { ...localDoc, ...fsDoc });
+            hasChanges = true;
+          }
+        }
+      }
+
+      if (hasChanges) {
+        const mergedList = Array.from(currentMap.values());
+        mergedList.sort((a, b) => {
+          const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+          const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
+        visitsCache = mergedList;
+        saveVisitsToDisk(visitsCache);
+        console.log(`[Server Firestore] Synced. Cache updated to ${visitsCache.length} visits.`);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Server Firestore] Sync warning:', err.message);
+  }
+}
+
+// Initial sync and periodic 15-second sync
+syncServerWithFirestore();
+setInterval(syncServerWithFirestore, 15000);
+
 // ==========================================
 // API ROUTES FIRST (BEFORE VITE MIDDLEWARE)
 // ==========================================
@@ -359,6 +425,13 @@ app.post('/api/visits', (req, res) => {
 
     saveVisitsToDisk(visitsCache);
 
+    // Asynchronously replicate to Cloud Firestore for cross-computer real-time distribution
+    if (serverFirestoreDb) {
+      setDoc(doc(serverFirestoreDb, 'visits', newVisit.id), newVisit, { merge: true }).catch((fsErr: any) => {
+        console.warn('[Server Firestore] Write warning:', fsErr.message);
+      });
+    }
+
     res.json({
       success: true,
       message: 'Kunjungan berhasil disimpan di server database.',
@@ -445,6 +518,13 @@ app.put('/api/visits/:id', (req, res) => {
 
     saveVisitsToDisk(visitsCache);
 
+    // Asynchronously replicate update to Cloud Firestore
+    if (serverFirestoreDb) {
+      setDoc(doc(serverFirestoreDb, 'visits', visitId), visitsCache[index], { merge: true }).catch((fsErr: any) => {
+        console.warn('[Server Firestore] Update warning:', fsErr.message);
+      });
+    }
+
     res.json({
       success: true,
       message: 'Data kunjungan berhasil diperbarui.',
@@ -462,6 +542,11 @@ app.delete('/api/visits/:id', (req, res) => {
     const visitId = req.params.id;
     visitsCache = visitsCache.filter((v) => v.id !== visitId);
     saveVisitsToDisk(visitsCache);
+
+    // Asynchronously replicate deletion to Cloud Firestore
+    if (serverFirestoreDb) {
+      deleteDoc(doc(serverFirestoreDb, 'visits', visitId)).catch(() => {});
+    }
     res.json({ success: true, message: 'Data kunjungan berhasil dihapus.', remaining: visitsCache.length });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

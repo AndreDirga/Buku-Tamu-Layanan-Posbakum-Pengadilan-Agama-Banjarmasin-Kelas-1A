@@ -183,11 +183,17 @@ export const QrCodeManager: React.FC<QrCodeManagerProps> = ({ onOpenGuestWithTok
 
             {/* Big QR Code Display */}
             <div className="relative inline-block p-4 bg-white rounded-2xl border-2 border-emerald-800/20 shadow-xs">
-              <img
-                src={currentQrImage}
-                alt="QR Code Buku Tamu Posbakum"
-                className="w-48 h-48 sm:w-60 sm:h-60 object-contain mx-auto transition-transform hover:scale-105 duration-200"
-              />
+              {currentQrImage ? (
+                <img
+                  src={currentQrImage}
+                  alt="QR Code Buku Tamu Posbakum"
+                  className="w-48 h-48 sm:w-60 sm:h-60 object-contain mx-auto transition-transform hover:scale-105 duration-200"
+                />
+              ) : (
+                <div className="w-48 h-48 sm:w-60 sm:h-60 flex items-center justify-center bg-slate-50 rounded-xl text-slate-400">
+                  <span>Memuat QR Code...</span>
+                </div>
+              )}
               <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                 <ShieldCheck className="w-3 h-3 text-emerald-700" />
                 <span>QR Code Resmi Terverifikasi</span>

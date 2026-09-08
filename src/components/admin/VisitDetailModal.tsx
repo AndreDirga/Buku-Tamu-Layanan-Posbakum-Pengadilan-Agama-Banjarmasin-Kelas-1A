@@ -368,17 +368,21 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
                     </button>
                   </div>
                   <div 
-                    onClick={() => setZoomedImage(visit.selfieUrl)}
-                    className="relative w-full aspect-square rounded-lg overflow-hidden bg-slate-900 border border-slate-300 cursor-pointer group"
+                    onClick={() => visit.selfieUrl && setZoomedImage(visit.selfieUrl)}
+                    className="relative w-full aspect-square rounded-lg overflow-hidden bg-slate-900 border border-slate-300 cursor-pointer group flex items-center justify-center"
                   >
-                    <img
-                      src={visit.selfieUrl}
-                      alt="Selfie"
-                      className="w-full h-full object-cover group-hover:scale-105 transition"
-                    />
+                    {visit.selfieUrl ? (
+                      <img
+                        src={visit.selfieUrl}
+                        alt="Selfie"
+                        className="w-full h-full object-cover group-hover:scale-105 transition"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-slate-400">Tidak ada foto</span>
+                    )}
                   </div>
                   <div className="text-[9px] font-mono text-slate-400 truncate">
-                    {visit.selfieFileName}
+                    {visit.selfieFileName || '-'}
                   </div>
                 </div>
 
@@ -386,24 +390,30 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
                 <div className="bg-slate-50 rounded-xl p-2 border border-slate-200 space-y-1 text-center">
                   <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
                     <span>Tanda Tangan</span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomedImage(visit.signatureUrl)}
-                      className="text-slate-400 hover:text-slate-700"
-                      title="Perbesar"
-                    >
-                      <Maximize2 className="w-3 h-3" />
-                    </button>
+                    {visit.signatureUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setZoomedImage(visit.signatureUrl)}
+                        className="text-slate-400 hover:text-slate-700"
+                        title="Perbesar"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                   <div 
-                    onClick={() => setZoomedImage(visit.signatureUrl)}
+                    onClick={() => visit.signatureUrl && setZoomedImage(visit.signatureUrl)}
                     className="relative w-full aspect-square rounded-lg overflow-hidden bg-white border border-slate-300 flex items-center justify-center p-1.5 cursor-pointer group"
                   >
-                    <img
-                      src={visit.signatureUrl}
-                      alt="Tanda Tangan"
-                      className="w-full h-full object-contain group-hover:scale-105 transition"
-                    />
+                    {visit.signatureUrl ? (
+                      <img
+                        src={visit.signatureUrl}
+                        alt="Tanda Tangan"
+                        className="w-full h-full object-contain group-hover:scale-105 transition"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-slate-400">Tidak ada tanda tangan</span>
+                    )}
                   </div>
                   <div className="text-[9px] font-mono text-slate-400 truncate">
                     {visit.signatureFileName}

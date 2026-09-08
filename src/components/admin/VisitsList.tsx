@@ -403,11 +403,17 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                       </td>
                       <td className="px-3 py-1.5 font-semibold text-slate-800">
                         <div className="flex items-center gap-2">
-                          <img
-                            src={visit.selfieUrl}
-                            alt=""
-                            className="w-6 h-6 rounded-full object-cover border border-slate-200 shrink-0"
-                          />
+                          {visit.selfieUrl ? (
+                            <img
+                              src={visit.selfieUrl}
+                              alt=""
+                              className="w-6 h-6 rounded-full object-cover border border-slate-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-[9px] font-bold text-emerald-800 shrink-0">
+                              {(visit.name || 'P').substring(0, 1).toUpperCase()}
+                            </div>
+                          )}
                           <span>{visit.name}</span>
                         </div>
                       </td>
@@ -503,11 +509,17 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                       onChange={() => handleToggleSelect(visit.id)}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer w-4 h-4"
                     />
-                    <img
-                      src={visit.selfieUrl}
-                      alt=""
-                      className="w-8 h-8 rounded-full object-cover border border-slate-200"
-                    />
+                    {visit.selfieUrl ? (
+                      <img
+                        src={visit.selfieUrl}
+                        alt=""
+                        className="w-8 h-8 rounded-full object-cover border border-slate-200"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-xs font-bold text-emerald-800 shrink-0">
+                        {(visit.name || 'P').substring(0, 1).toUpperCase()}
+                      </div>
+                    )}
                     <div>
                       <div className="font-bold text-slate-900 text-xs">{visit.name}</div>
                       <div className="font-mono text-[11px] font-bold text-emerald-800">

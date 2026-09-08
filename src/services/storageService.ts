@@ -246,56 +246,138 @@ export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => 
   return merged;
 };
 
-// Direct fetch from Server Database API (with fast fallback to LocalStorage)
+// Direct fetch from Server Database API and Cloud Firestore (Dual-Cloud Synchronization)
 export const fetchVisits = async (): Promise<Visit[]> => {
-  let serverVisits: Visit[] | null = null;
+  let serverVisits: Visit[] = [];
+  let firestoreVisits: Visit[] = [];
 
-  // 1. Primary Source: Server Database API (authoritative, zero quota limits, 100% durable & cross-device)
-  try {
-    const res = await fetch('/api/visits', { cache: 'no-store' });
-    if (res.ok) {
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        serverVisits = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+  // 1. Primary Source A: Server Database API
+  const serverPromise = (async () => {
+    try {
+      const res = await fetch('/api/visits', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+        }
       }
+    } catch (err) {
+      console.warn('Server fetch error:', err);
     }
-  } catch (err) {
-    console.warn('Server /api/visits not reachable, using fallback:', err);
-  }
+    return [];
+  })();
 
-  // If server responded with data: update local storage cache and return it immediately
-  if (serverVisits !== null && serverVisits.length > 0) {
-    const localVisits = getAllLocalVisits();
-    const serverIds = new Set(serverVisits.map((v) => v.id));
-    const missingOnServer = localVisits.filter((v) => v.id && !serverIds.has(v.id));
-
-    if (missingOnServer.length > 0) {
-      // Sync any missing local visits to server in background
-      syncLocalVisitsToServer(missingOnServer).catch(() => {});
-      const merged = mergeVisits(serverVisits, missingOnServer);
-      safeSaveVisitsToStorage(merged);
-      return merged;
+  // 2. Primary Source B: Cloud Firestore (Cross-computer internet sync)
+  const firestorePromise = (async () => {
+    try {
+      const snap = await Promise.race([
+        getDocs(collection(db, 'visits')),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 6000))
+      ]);
+      if (snap && 'forEach' in snap) {
+        const list: Visit[] = [];
+        snap.forEach((d: any) => {
+          list.push(normalizeVisitData(d.data(), d.id));
+        });
+        return list;
+      }
+    } catch (err) {
+      console.warn('Firestore fetch warning:', err);
     }
+    return [];
+  })();
 
-    safeSaveVisitsToStorage(serverVisits);
-    return serverVisits;
-  }
+  const [resServer, resFirestore] = await Promise.all([serverPromise, firestorePromise]);
+  serverVisits = resServer;
+  firestoreVisits = resFirestore;
 
-  // Fallback if server returned empty or failed: use local visits
+  // 3. Merge Server + Cloud Firestore + Local Cache
   const localVisits = getAllLocalVisits();
-  if (localVisits.length > 0) {
-    syncLocalVisitsToServer(localVisits).catch(() => {});
-    return localVisits;
+  const mergedCloud = mergeVisits(serverVisits, firestoreVisits);
+  const fullyMerged = mergeVisits(mergedCloud, localVisits);
+
+  // Strict descending order: most recent always at index 0
+  fullyMerged.sort((a, b) => {
+    const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  if (fullyMerged.length > 0) {
+    safeSaveVisitsToStorage(fullyMerged);
+
+    // Cross-sync: If Firestore had visits that the Server container didn't have, sync to Server in background
+    const serverIds = new Set(serverVisits.map((v) => v.id));
+    const missingOnServer = fullyMerged.filter((v) => v.id && !serverIds.has(v.id));
+    if (missingOnServer.length > 0) {
+      syncLocalVisitsToServer(missingOnServer).catch(() => {});
+    }
+
+    // Cross-sync: If Server had visits that Firestore didn't have, sync to Firestore in background
+    const firestoreIds = new Set(firestoreVisits.map((v) => v.id));
+    const missingInFirestore = fullyMerged.filter((v) => v.id && !firestoreIds.has(v.id));
+    if (missingInFirestore.length > 0) {
+      missingInFirestore.forEach((v) => {
+        setDoc(doc(db, 'visits', v.id), sanitizeForFirestore(v), { merge: true }).catch(() => {});
+      });
+    }
+
+    return fullyMerged;
   }
 
-  return serverVisits || [];
+  return localVisits;
 };
 
-// Real-time synchronization for Visits collection across all browsers and devices
+// Real-time synchronization for Visits collection across all computers and devices
 export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => void) => {
   let isSubscribed = true;
-  let lastChecksum = '';
+  let currentVisits: Visit[] = getStoredVisits();
 
+  // Helper to handle and dispatch new visits array with dedup and sorting
+  const handleFreshVisits = (fresh: Visit[]) => {
+    if (!isSubscribed) return;
+    const merged = mergeVisits(currentVisits, fresh);
+    merged.sort((a, b) => {
+      const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+
+    // Check if data actually changed
+    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.notes || ''}`).join('|');
+    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.notes || ''}`).join('|');
+
+    if (newKeys !== oldKeys || currentVisits.length !== merged.length) {
+      currentVisits = merged;
+      safeSaveVisitsToStorage(merged);
+      callback(merged);
+    }
+  };
+
+  // 1. REAL-TIME CLOUD FIRESTORE LISTENER (Pushes updates to other computers across internet instantly)
+  let unsubFirestore = () => {};
+  try {
+    unsubFirestore = onSnapshot(
+      collection(db, 'visits'),
+      (snapshot) => {
+        if (!isSubscribed) return;
+        const fsVisits: Visit[] = [];
+        snapshot.forEach((d) => {
+          fsVisits.push(normalizeVisitData(d.data(), d.id));
+        });
+        if (fsVisits.length > 0) {
+          handleFreshVisits(fsVisits);
+        }
+      },
+      (error) => {
+        console.warn('Firestore onSnapshot warning:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to attach Firestore onSnapshot:', err);
+  }
+
+  // 2. Server polling backup every 2.5 seconds
   const syncFromServer = async () => {
     if (!isSubscribed) return;
     try {
@@ -304,31 +386,23 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const fresh = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
-          const checksum = fresh.map((v) => `${v.id}_${v.updatedAt || ''}_${v.status}_${v.notes || ''}`).join('|');
-          if (checksum !== lastChecksum) {
-            lastChecksum = checksum;
-            safeSaveVisitsToStorage(fresh);
-            callback(fresh);
-          }
+          handleFreshVisits(fresh);
         }
       }
     } catch {}
   };
 
-  // Immediate sync on subscribe
   syncFromServer();
+  const intervalId = setInterval(syncFromServer, 2500);
 
-  // Fast polling every 2 seconds for instant real-time updates across multiple admin/guest tabs
-  const intervalId = setInterval(syncFromServer, 2000);
-
-  // Cross-tab broadcast & storage listeners for instant update when guest submits in another tab
+  // 3. Local tab StorageEvent listener
   const handleStorageChange = (e: StorageEvent) => {
     if (!isSubscribed) return;
     if (e.key === STORAGE_KEY_VISITS) {
       try {
         const parsed = JSON.parse(e.newValue || '[]');
         if (Array.isArray(parsed) && parsed.length > 0) {
-          callback(parsed);
+          handleFreshVisits(parsed);
         }
       } catch {}
       syncFromServer();
@@ -344,7 +418,7 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   window.addEventListener('storage', handleStorageChange);
   window.addEventListener('focus', handleFocus);
 
-  // BroadcastChannel listener
+  // 4. BroadcastChannel listener
   const unsubBroadcast = subscribeToNewVisits(() => {
     if (isSubscribed) {
       syncFromServer();
@@ -353,6 +427,7 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
 
   return () => {
     isSubscribed = false;
+    unsubFirestore();
     clearInterval(intervalId);
     window.removeEventListener('storage', handleStorageChange);
     window.removeEventListener('focus', handleFocus);
@@ -431,17 +506,16 @@ export const saveVisit = async (
   const updated = [visitRecord, ...localVisits.filter((v) => v.id !== visitRecord.id)];
   safeSaveVisitsToStorage(updated);
 
-  // 3. Detached non-blocking Firestore fallback (fire-and-forget, never blocks user interface)
-  setTimeout(async () => {
+  // 3. Cloud Firestore permanent sync (propagates across internet to all admin computers)
+  (async () => {
     try {
       const cleanRecord = sanitizeForFirestore(visitRecord);
       const docRef = doc(db, 'visits', visitRecord.id);
-      await Promise.race([
-        setDoc(docRef, cleanRecord),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2000)),
-      ]);
-    } catch {}
-  }, 10);
+      await setDoc(docRef, cleanRecord, { merge: true });
+    } catch (fsErr) {
+      console.warn('Background Firestore write queued by SDK:', fsErr);
+    }
+  })();
 
   // 4. Log activity permanently
   logActivity({

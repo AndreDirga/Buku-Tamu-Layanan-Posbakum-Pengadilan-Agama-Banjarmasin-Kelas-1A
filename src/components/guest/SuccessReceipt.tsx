@@ -129,14 +129,22 @@ export const SuccessReceipt: React.FC<SuccessReceiptProps> = ({
             <div className="grid grid-cols-2 gap-2 pt-1.5">
               <div className="bg-white p-1.5 rounded-lg border border-slate-200 text-center">
                 <div className="text-[10px] font-semibold text-slate-500 mb-0.5">Foto Selfie</div>
-                <div className="w-12 h-12 mx-auto rounded overflow-hidden border border-slate-100 bg-slate-100">
-                  <img src={visit.selfieUrl} alt="Selfie" className="w-full h-full object-cover" />
+                <div className="w-12 h-12 mx-auto rounded overflow-hidden border border-slate-100 bg-slate-100 flex items-center justify-center">
+                  {visit.selfieUrl ? (
+                    <img src={visit.selfieUrl} alt="Selfie" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[9px] text-slate-400 font-medium">Terverifikasi</span>
+                  )}
                 </div>
               </div>
               <div className="bg-white p-1.5 rounded-lg border border-slate-200 text-center">
                 <div className="text-[10px] font-semibold text-slate-500 mb-0.5">Tanda Tangan</div>
                 <div className="w-12 h-12 mx-auto rounded overflow-hidden border border-slate-100 bg-white flex items-center justify-center">
-                  <img src={visit.signatureUrl} alt="Tanda Tangan" className="w-full h-full object-contain p-0.5" />
+                  {visit.signatureUrl ? (
+                    <img src={visit.signatureUrl} alt="Tanda Tangan" className="w-full h-full object-contain p-0.5" />
+                  ) : (
+                    <span className="text-[9px] text-slate-400 font-medium">Terverifikasi</span>
+                  )}
                 </div>
               </div>
             </div>
