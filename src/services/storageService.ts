@@ -686,22 +686,8 @@ export const saveVisit = async (
     badgeColor: 'blue',
   });
 
-  // 5. Real-time notification trigger for admin dashboard & other open tabs
+  // 5. Real-time notification trigger for admin dashboard & other open tabs across computers
   broadcastNewVisit(visitRecord);
-
-  // 6. Automatic Daily Sync to Admin Google Drive
-  try {
-    import('./googleDriveAdminService').then(({ isGDriveAutoSyncEnabled, getStoredGDriveAuth, syncDailyVisitsToGDrive }) => {
-      if (isGDriveAutoSyncEnabled()) {
-        const authInfo = getStoredGDriveAuth();
-        if (authInfo?.accessToken) {
-          const todayISO = now.toISOString().substring(0, 10);
-          const visitsToday = updated.filter((v) => (v.visitedAt || v.createdAt || '').substring(0, 10) === todayISO);
-          syncDailyVisitsToGDrive(todayISO, visitsToday).catch(() => {});
-        }
-      }
-    }).catch(() => {});
-  } catch {}
 
   return visitRecord;
 };

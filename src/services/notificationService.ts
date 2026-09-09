@@ -1,8 +1,11 @@
 import { Visit } from '../types/posbakum';
+import { db } from './firebase';
+import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const NOTIFICATION_CHANNEL_NAME = 'posbakum_realtime_channel';
 const SOUND_PREF_KEY = 'pabjm_notification_sound_enabled';
 const DAILY_NOTIFICATIONS_KEY = 'pabjm_daily_notifications_v2';
+const NOTIFIED_CACHE_KEY = 'pabjm_notified_visit_ids_session';
 
 // Helper to get local date key in YYYY-MM-DD format
 export const getTodayDateKey = (): string => {
@@ -245,46 +248,151 @@ export const setNotificationSoundEnabled = (enabled: boolean) => {
   localStorage.setItem(SOUND_PREF_KEY, enabled ? 'true' : 'false');
 };
 
-// Broadcast new visit event across same window, cross-tab BroadcastChannel, and localStorage
-export const broadcastNewVisit = (visit: Visit) => {
-  // 1. Same-window custom event
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('posbakum_new_visit', { detail: visit })
-    );
-
-    // 2. LocalStorage event for cross-tab fallback
-    try {
-      localStorage.setItem(
-        'pabjm_last_visit_event',
-        JSON.stringify({ timestamp: Date.now(), visitId: visit.id, visit })
-      );
-    } catch (e) {
-      console.warn('LocalStorage notification event error:', e);
+// Helper to request browser desktop notification permission
+export const requestDesktopNotificationPermission = async (): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  try {
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission !== 'denied') {
+      const permission = await Notification.requestPermission();
+      return permission === 'granted';
     }
+  } catch {}
+  return false;
+};
 
-    // 3. BroadcastChannel for fast modern cross-tab messaging
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const bc = new BroadcastChannel(NOTIFICATION_CHANNEL_NAME);
-        bc.postMessage({ type: 'NEW_VISIT', visit });
-        setTimeout(() => bc.close(), 1000);
-      }
-    } catch (e) {
-      console.warn('BroadcastChannel error:', e);
+// Show native browser desktop notification (works even when tab/window is minimized)
+export const showDesktopNotification = (visit: Visit) => {
+  try {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      const title = `Tamu Baru: ${visit.name}`;
+      const notif = new Notification(title, {
+        body: `Nomor: ${visit.visitNumber} • Perkara: ${visit.caseType}`,
+        icon: '/posbakum-qr.png',
+        tag: `posbakum-${visit.id}`,
+      });
+      notif.onclick = () => {
+        window.focus();
+        notif.close();
+      };
     }
+  } catch (e) {
+    // Ignore desktop notification error
   }
 };
 
-// Subscribe to new visits from all sources (same-window, cross-tab BroadcastChannel, storage events)
+// Broadcast new visit event across same window, cross-tab BroadcastChannel, Server API, and Cloud Firestore
+export const broadcastNewVisit = async (visit: Visit) => {
+  if (typeof window === 'undefined') return;
+
+  // 1. Same-window custom event (0ms)
+  window.dispatchEvent(
+    new CustomEvent('posbakum_new_visit', { detail: visit })
+  );
+
+  // 2. LocalStorage event for cross-tab fallback
+  try {
+    localStorage.setItem(
+      'pabjm_last_visit_event',
+      JSON.stringify({ timestamp: Date.now(), visitId: visit.id, visit })
+    );
+  } catch (e) {}
+
+  // 3. BroadcastChannel for modern cross-tab messaging
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel(NOTIFICATION_CHANNEL_NAME);
+      bc.postMessage({ type: 'NEW_VISIT', visit });
+      setTimeout(() => bc.close(), 1000);
+    }
+  } catch (e) {}
+
+  // 4. Server API broadcast endpoint (relays to all connected computers via backend)
+  try {
+    fetch('/api/notifications/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visit }),
+    }).catch(() => {});
+  } catch {}
+
+  // 5. Cloud Firestore cross-computer real-time distribution
+  try {
+    const notifDocRef = doc(db, 'admin_notifications', `notif-${visit.id}`);
+    const cleanDoc = {
+      id: `notif-${visit.id}`,
+      visitId: visit.id,
+      visit: {
+        id: visit.id,
+        visitNumber: visit.visitNumber,
+        name: visit.name,
+        caseCategory: visit.caseCategory,
+        caseType: visit.caseType,
+        timeDisplay: visit.timeDisplay,
+        dateDisplay: visit.dateDisplay,
+        status: visit.status,
+        visitedAt: visit.visitedAt,
+        selfieUrl: visit.selfieUrl || '',
+      },
+      timestamp: Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    await setDoc(notifDocRef, cleanDoc);
+  } catch (fsErr) {
+    console.warn('[Firestore Notification] Broadcast warning:', fsErr);
+  }
+};
+
+// In-memory set of notified visit IDs to prevent duplicate triggers
+const notifiedVisitIds = new Set<string>();
+
+// Helper to check and mark if a visit has been notified on this computer session
+function markVisitAsNotified(visitId: string): boolean {
+  if (!visitId || notifiedVisitIds.has(visitId)) return false;
+  notifiedVisitIds.add(visitId);
+  try {
+    const raw = sessionStorage.getItem(NOTIFIED_CACHE_KEY);
+    const set: string[] = raw ? JSON.parse(raw) : [];
+    if (!set.includes(visitId)) {
+      set.push(visitId);
+      sessionStorage.setItem(NOTIFIED_CACHE_KEY, JSON.stringify(set.slice(-100)));
+    }
+  } catch {}
+  return true;
+}
+
+// Preload already notified IDs from session storage
+if (typeof window !== 'undefined') {
+  try {
+    const raw = sessionStorage.getItem(NOTIFIED_CACHE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        arr.forEach((id) => notifiedVisitIds.add(id));
+      }
+    }
+  } catch {}
+}
+
+// Subscribe to new visits from ALL sources (Cloud Firestore, Server Polling, BroadcastChannel, Same-window)
 export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() => void) => {
   if (typeof window === 'undefined') return () => {};
+
+  const listenerStartTime = Date.now();
+
+  const handleIncomingVisit = (visit: Visit) => {
+    if (!visit || !visit.id) return;
+    if (markVisitAsNotified(visit.id)) {
+      onNewVisit(visit);
+      showDesktopNotification(visit);
+    }
+  };
 
   // 1. Same-window listener
   const handleCustomEvent = (event: Event) => {
     const customEv = event as CustomEvent<Visit>;
     if (customEv.detail) {
-      onNewVisit(customEv.detail);
+      handleIncomingVisit(customEv.detail);
     }
   };
   window.addEventListener('posbakum_new_visit', handleCustomEvent);
@@ -296,7 +404,7 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
       broadcastChannel = new BroadcastChannel(NOTIFICATION_CHANNEL_NAME);
       broadcastChannel.onmessage = (event) => {
         if (event.data?.type === 'NEW_VISIT' && event.data.visit) {
-          onNewVisit(event.data.visit);
+          handleIncomingVisit(event.data.visit);
         }
       };
     }
@@ -304,20 +412,83 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     console.warn('Could not initialize BroadcastChannel listener:', e);
   }
 
-  // 3. Storage event fallback (Cross-tab for older browsers or if BroadcastChannel is blocked)
+  // 3. Storage event fallback (Cross-tab)
   const handleStorageEvent = (event: StorageEvent) => {
     if (event.key === 'pabjm_last_visit_event' && event.newValue) {
       try {
         const parsed = JSON.parse(event.newValue);
         if (parsed?.visit) {
-          onNewVisit(parsed.visit);
+          handleIncomingVisit(parsed.visit);
         }
-      } catch (e) {
-        // Ignore JSON parse error
-      }
+      } catch {}
     }
   };
   window.addEventListener('storage', handleStorageEvent);
+
+  // 4. Cloud Firestore cross-computer real-time listener (primary push across different computers)
+  let unsubscribeFirestoreNotif: (() => void) | null = null;
+  let unsubscribeFirestoreVisits: (() => void) | null = null;
+
+  try {
+    const notifCol = collection(db, 'admin_notifications');
+    unsubscribeFirestoreNotif = onSnapshot(notifCol, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added' || change.type === 'modified') {
+          const data = change.doc.data();
+          if (data && data.visit) {
+            // Only trigger if notification is recent (created within 20s before listener or after)
+            const docTime = data.timestamp || new Date(data.createdAt || 0).getTime();
+            if (docTime >= listenerStartTime - 20000) {
+              handleIncomingVisit(data.visit as Visit);
+            }
+          }
+        }
+      });
+    }, (err) => {
+      console.warn('[Firestore Notification] onSnapshot warning:', err);
+    });
+  } catch (e) {
+    console.warn('Could not start Firestore notification listener:', e);
+  }
+
+  // 5. Cloud Firestore visits collection listener (secondary layer)
+  try {
+    const visitsCol = collection(db, 'visits');
+    unsubscribeFirestoreVisits = onSnapshot(visitsCol, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data() as Visit;
+          if (data && data.id) {
+            const visitTime = new Date(data.visitedAt || data.createdAt || 0).getTime();
+            if (visitTime >= listenerStartTime - 20000) {
+              handleIncomingVisit(data);
+            }
+          }
+        }
+      });
+    }, () => {});
+  } catch (e) {}
+
+  // 6. Server fallback polling every 3 seconds (guarantees delivery if Firestore WebSockets are offline)
+  let lastServerPollTime = listenerStartTime - 10000;
+  const pollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/notifications/recent?since=${lastServerPollTime}`);
+      if (res.ok) {
+        const result = await res.json();
+        if (result.success && Array.isArray(result.data)) {
+          result.data.forEach((item: any) => {
+            if (item?.visit) {
+              handleIncomingVisit(item.visit);
+            }
+            if (item?.timestamp && item.timestamp > lastServerPollTime) {
+              lastServerPollTime = item.timestamp;
+            }
+          });
+        }
+      }
+    } catch {}
+  }, 3000);
 
   return () => {
     window.removeEventListener('posbakum_new_visit', handleCustomEvent);
@@ -327,5 +498,16 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         broadcastChannel.close();
       } catch (e) {}
     }
+    if (unsubscribeFirestoreNotif) {
+      try {
+        unsubscribeFirestoreNotif();
+      } catch (e) {}
+    }
+    if (unsubscribeFirestoreVisits) {
+      try {
+        unsubscribeFirestoreVisits();
+      } catch (e) {}
+    }
+    clearInterval(pollInterval);
   };
 };

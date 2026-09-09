@@ -45,6 +45,9 @@ export interface ActivityLog {
   description: string;
   ipAddress: string;
   badgeColor?: 'emerald' | 'blue' | 'amber' | 'purple' | 'red';
+  deviceInfo?: string;
+  computerId?: string;
+  isRemoteLogin?: boolean;
 }
 
 export interface QrToken {

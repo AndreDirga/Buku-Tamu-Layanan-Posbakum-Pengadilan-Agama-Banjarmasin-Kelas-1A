@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, CASE_CATEGORIES } from '../../types/posbakum';
-import { getStoredLogs, clearAllVisits, logActivity } from '../../services/storageService';
+import { getStoredLogs, subscribeToLogs, clearAllVisits, logActivity } from '../../services/storageService';
 import { 
   Settings, 
   History, 
@@ -12,7 +12,9 @@ import {
   CheckCircle2, 
   Scale, 
   Layers,
-  Sparkles
+  Sparkles,
+  Monitor,
+  Laptop
 } from 'lucide-react';
 
 interface SettingsAndLogsProps {
@@ -20,12 +22,16 @@ interface SettingsAndLogsProps {
 }
 
 export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset }) => {
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [logs, setLogs] = useState<ActivityLog[]>(() => getStoredLogs());
   const [resetDone, setResetDone] = useState(false);
   const [activeTab, setActiveTab] = useState<'logs' | 'categories' | 'system'>('logs');
 
   useEffect(() => {
-    setLogs(getStoredLogs());
+    // Real-time synchronization of audit logs across all computers/devices
+    const unsubscribe = subscribeToLogs((latestLogs) => {
+      setLogs(latestLogs);
+    });
+    return unsubscribe;
   }, []);
 
   const handleResetData = async () => {
@@ -123,26 +129,59 @@ export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset })
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50">
-                    <td className="px-2.5 py-1.5 font-mono text-slate-500 text-[11px] whitespace-nowrap">
-                      {log.timestamp}
-                    </td>
-                    <td className="px-2.5 py-1.5 text-slate-800">
-                      <div className="font-bold text-slate-900">{log.userName}</div>
-                      <div className="text-[9px] text-slate-400">{log.userRole}</div>
-                    </td>
-                    <td className="px-2.5 py-1.5">
-                      <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-slate-100 text-slate-800 border border-slate-200">
-                        {log.action}
-                      </span>
-                    </td>
-                    <td className="px-2.5 py-1.5 text-slate-700 text-[11px]">{log.description}</td>
-                    <td className="px-2.5 py-1.5 font-mono text-slate-400 text-[10px]">
-                      {log.ipAddress}
-                    </td>
-                  </tr>
-                ))}
+                {logs.map((log) => {
+                  const isLogin = log.action.includes('LOGIN');
+                  const isOtherDevice = log.description.includes('Komputer Lain') || log.description.includes('Perangkat Lain');
+
+                  return (
+                    <tr 
+                      key={log.id} 
+                      className={`hover:bg-slate-50 transition-colors ${
+                        isOtherDevice 
+                          ? 'bg-amber-50/40 hover:bg-amber-50/70' 
+                          : isLogin 
+                            ? 'bg-blue-50/30 hover:bg-blue-50/60' 
+                            : ''
+                      }`}
+                    >
+                      <td className="px-2.5 py-1.5 font-mono text-slate-500 text-[11px] whitespace-nowrap">
+                        {log.timestamp}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-slate-800">
+                        <div className="font-bold text-slate-900 flex items-center gap-1">
+                          <span>{log.userName}</span>
+                          {isOtherDevice && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                              <Monitor className="w-2.5 h-2.5 text-amber-700" />
+                              <span>Komputer Lain</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[9px] text-slate-400">{log.userRole}</div>
+                      </td>
+                      <td className="px-2.5 py-1.5">
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border inline-flex items-center gap-1 ${
+                          isOtherDevice 
+                            ? 'bg-amber-100 text-amber-950 border-amber-300'
+                            : isLogin
+                              ? 'bg-sky-100 text-sky-950 border-sky-200'
+                              : 'bg-slate-100 text-slate-800 border-slate-200'
+                        }`}>
+                          {isLogin && <Laptop className="w-2.5 h-2.5" />}
+                          <span>{log.action}</span>
+                        </span>
+                      </td>
+                      <td className="px-2.5 py-1.5 text-slate-700 text-[11px] leading-relaxed">
+                        {log.description}
+                      </td>
+                      <td className="px-2.5 py-1.5 font-mono text-slate-500 text-[10px] whitespace-nowrap">
+                        <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
+                          {log.ipAddress || '127.0.0.1'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

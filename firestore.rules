@@ -9,8 +9,20 @@ service cloud.firestore {
       allow update, delete: if true;
     }
 
+    // Real-time cross-computer notifications for admin posbakum
+    match /admin_notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Logs collection
     match /activity_logs/{logId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Registered admin devices for audit log
+    match /admin_devices/{deviceId} {
       allow read: if true;
       allow write: if true;
     }

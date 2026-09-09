@@ -225,6 +225,17 @@ function saveLogsToDisk(logs: any[]): void {
 // In-memory cache synced with disk
 let visitsCache: any[] = readVisitsFromDisk();
 
+// Real-time cross-computer notification buffer
+interface ServerNotification {
+  id: string;
+  visitId: string;
+  visit: any;
+  timestamp: number;
+  createdAt: string;
+}
+
+let recentNotifications: ServerNotification[] = [];
+
 // Cloud Firestore initialization in server for multi-instance & multi-computer real-time data sync
 let serverFirestoreDb: any = null;
 try {
@@ -334,6 +345,64 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     visitsCount: visitsCache.length,
   });
+});
+
+// GET Client IP and System Information (detects computer/device details)
+app.get('/api/client-info', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  const forwarded = req.headers['x-forwarded-for'];
+  let ip = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.socket.remoteAddress || '127.0.0.1';
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  const userAgent = (req.headers['user-agent'] as string) || 'Unknown Client';
+  res.json({
+    success: true,
+    ip,
+    userAgent,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// GET recent notifications for cross-computer real-time synchronization
+app.get('/api/notifications/recent', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  const since = parseInt(req.query.since as string, 10) || 0;
+  const filtered = since > 0
+    ? recentNotifications.filter((n) => n.timestamp > since)
+    : recentNotifications.slice(0, 15);
+  res.json({
+    success: true,
+    count: filtered.length,
+    data: filtered,
+  });
+});
+
+// POST broadcast a new visit notification to all computers
+app.post('/api/notifications/broadcast', (req, res) => {
+  try {
+    const visit = req.body?.visit || req.body;
+    if (!visit || !visit.id) {
+      return res.status(400).json({ success: false, message: 'Data kunjungan tidak valid.' });
+    }
+    const notifItem: ServerNotification = {
+      id: `notif-${visit.id}-${Date.now()}`,
+      visitId: visit.id,
+      visit,
+      timestamp: Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    recentNotifications = [notifItem, ...recentNotifications.filter((n) => n.visitId !== visit.id)].slice(0, 50);
+
+    // Replicate to Cloud Firestore admin_notifications
+    if (serverFirestoreDb) {
+      setDoc(doc(serverFirestoreDb, 'admin_notifications', notifItem.id), notifItem, { merge: true }).catch(() => {});
+    }
+
+    res.json({ success: true, data: notifItem });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // GET all visits (instant, 100% reliable, zero Firestore quota limits)
@@ -459,11 +528,23 @@ app.post('/api/visits', (req, res) => {
 
     saveVisitsToDisk(visitsCache);
 
+    // Register notification in server buffer for cross-computer real-time distribution
+    const notifItem: ServerNotification = {
+      id: `notif-${newVisit.id}-${Date.now()}`,
+      visitId: newVisit.id,
+      visit: newVisit,
+      timestamp: Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    recentNotifications = [notifItem, ...recentNotifications.filter((n) => n.visitId !== newVisit.id)].slice(0, 50);
+
     // Asynchronously replicate to Cloud Firestore for cross-computer real-time distribution
     if (serverFirestoreDb) {
       setDoc(doc(serverFirestoreDb, 'visits', newVisit.id), newVisit, { merge: true }).catch((fsErr: any) => {
         console.warn('[Server Firestore] Write warning:', fsErr.message);
       });
+      // Also write to admin_notifications collection
+      setDoc(doc(serverFirestoreDb, 'admin_notifications', notifItem.id), notifItem, { merge: true }).catch(() => {});
     }
 
     res.json({
@@ -629,9 +710,23 @@ app.get('/api/logs', (req, res) => {
 app.post('/api/logs', (req, res) => {
   try {
     const newLog = req.body;
+    const forwarded = req.headers['x-forwarded-for'];
+    let clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.socket.remoteAddress || '127.0.0.1';
+    if (clientIp.startsWith('::ffff:')) {
+      clientIp = clientIp.substring(7);
+    }
+    if (!newLog.ipAddress || newLog.ipAddress.includes('127.0.0.1')) {
+      newLog.ipAddress = clientIp;
+    }
     const logs = readLogsFromDisk();
     const updated = [newLog, ...logs].slice(0, 500); // keep last 500 logs
     saveLogsToDisk(updated);
+
+    // Replicate log to Firestore
+    if (serverFirestoreDb && newLog.id) {
+      setDoc(doc(serverFirestoreDb, 'activity_logs', newLog.id), newLog, { merge: true }).catch(() => {});
+    }
+
     res.json({ success: true, data: newLog });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

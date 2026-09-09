@@ -44,7 +44,8 @@ import {
   deleteSingleDailyNotification,
   clearAllDailyNotifications,
   getTodayDateLabel,
-  getTodayDateKey
+  getTodayDateKey,
+  requestDesktopNotificationPermission
 } from '../../services/notificationService';
 import { NewVisitNotificationPopup } from './NewVisitNotificationPopup';
 
@@ -101,10 +102,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         }
         return [...prev, newVisit];
       });
+
+      // Auto refresh data across table and dashboard
+      if (onRefreshData) {
+        try {
+          onRefreshData();
+        } catch {}
+      }
     });
 
     return unsubscribe;
-  }, [currentPopupVisit]);
+  }, [currentPopupVisit, onRefreshData]);
 
   // Periodic check to auto-reset when date rolls over to next day
   useEffect(() => {
