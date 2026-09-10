@@ -343,36 +343,110 @@ export const broadcastNewVisit = async (visit: Visit) => {
   }
 };
 
-// In-memory set of notified visit IDs to prevent duplicate triggers
-const notifiedVisitIds = new Set<string>();
+// In-memory map of notified visit IDs with timestamps to prevent duplicate triggers across channels
+const recentlyNotifiedVisits = new Map<string, number>();
 
-// Helper to check and mark if a visit has been notified on this computer session
+// Helper to check and mark if a visit has been notified on this computer session (debounces within 15 seconds)
 function markVisitAsNotified(visitId: string): boolean {
-  if (!visitId || notifiedVisitIds.has(visitId)) return false;
-  notifiedVisitIds.add(visitId);
-  try {
-    const raw = sessionStorage.getItem(NOTIFIED_CACHE_KEY);
-    const set: string[] = raw ? JSON.parse(raw) : [];
-    if (!set.includes(visitId)) {
-      set.push(visitId);
-      sessionStorage.setItem(NOTIFIED_CACHE_KEY, JSON.stringify(set.slice(-100)));
+  if (!visitId) return false;
+  const now = Date.now();
+  const lastTime = recentlyNotifiedVisits.get(visitId);
+  if (lastTime && now - lastTime < 15000) {
+    return false; // Already popped up in the last 15s
+  }
+  recentlyNotifiedVisits.set(visitId, now);
+  // Cleanup old entries
+  if (recentlyNotifiedVisits.size > 100) {
+    for (const [id, time] of recentlyNotifiedVisits.entries()) {
+      if (now - time > 60000) recentlyNotifiedVisits.delete(id);
     }
-  } catch {}
+  }
   return true;
 }
 
-// Preload already notified IDs from session storage
-if (typeof window !== 'undefined') {
-  try {
-    const raw = sessionStorage.getItem(NOTIFIED_CACHE_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) {
-        arr.forEach((id) => notifiedVisitIds.add(id));
-      }
-    }
-  } catch {}
-}
+// Synchronize daily notification store with all known visits from database/state
+export const syncDailyNotificationsWithVisits = (
+  allVisits: Visit[]
+): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  const todayKey = getTodayDateKey();
+
+  // Extract visits that occurred today
+  const todayVisits = (allVisits || []).filter((v) => {
+    if (!v) return false;
+    const vDate = (v.visitedAt || v.createdAt || '').substring(0, 10);
+    if (vDate === todayKey) return true;
+    if (v.visitNumber && typeof v.visitNumber === 'string' && v.visitNumber.includes(todayKey.replace(/-/g, ''))) return true;
+    return false;
+  });
+
+  // Merge with existing visits in current store
+  const map = new Map<string, Visit>();
+  current.visits.forEach((v) => {
+    if (v && v.id) map.set(v.id, v);
+  });
+  todayVisits.forEach((v) => {
+    if (v && v.id) map.set(v.id, v);
+  });
+
+  const mergedVisits = Array.from(map.values());
+  mergedVisits.sort((a, b) => {
+    const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  const unreadCount = mergedVisits.filter((v) => !current.readVisitIds.includes(v.id)).length;
+
+  const newStore: DailyNotificationStore = {
+    dateKey: todayKey,
+    dateLabel: current.dateLabel || getTodayDateLabel(),
+    visits: mergedVisits,
+    readVisitIds: current.readVisitIds,
+  };
+  saveDailyNotificationStore(newStore);
+
+  return {
+    visits: mergedVisits,
+    readVisitIds: current.readVisitIds,
+    unreadCount,
+  };
+};
+
+// Trigger a mock test notification for admin to test sound and banner
+export const triggerTestNotification = (): Visit => {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const testVisit: Visit = {
+    id: `test-${Date.now()}`,
+    visitNumber: `TEST-${Date.now().toString().slice(-4)}`,
+    name: 'Pengunjung Simulasi (Uji Coba)',
+    caseCategory: 'Konsultasi Hukum Gratis',
+    caseType: 'Uji Coba Notifikasi Sistem Posbakum',
+    timeDisplay: `${hours}:${minutes} WITA`,
+    dateDisplay: getTodayDateLabel(),
+    status: 'Menunggu',
+    visitedAt: now.toISOString(),
+    createdAt: now.toISOString(),
+    ktpAddress: 'Jl. Lambung Mangkurat No. 1, Banjarmasin',
+    domicileAddress: 'Jl. Lambung Mangkurat No. 1, Banjarmasin',
+    domicileSameAsKtp: true,
+    email: 'test@posbakum.pa-banjarmasin.go.id',
+    whatsapp: '0812-3456-7890',
+    occupation: 'Masyarakat',
+    selfieUrl: '',
+    selfieFileName: '',
+    signatureUrl: '',
+    signatureFileName: '',
+    qrToken: 'TEST-SYSTEM',
+  };
+
+  playNotificationChime();
+  addVisitToDailyNotifications(testVisit);
+  broadcastNewVisit(testVisit);
+  return testVisit;
+};
 
 // Subscribe to new visits from ALL sources (Cloud Firestore, Server Polling, BroadcastChannel, Same-window)
 export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() => void) => {
@@ -382,6 +456,9 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
 
   const handleIncomingVisit = (visit: Visit) => {
     if (!visit || !visit.id) return;
+    // 1. Always ensure visit is in daily notification history
+    addVisitToDailyNotifications(visit);
+    // 2. Debounce popup and sound trigger across multiple concurrent channels
     if (markVisitAsNotified(visit.id)) {
       onNewVisit(visit);
       showDesktopNotification(visit);

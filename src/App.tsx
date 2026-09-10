@@ -257,6 +257,7 @@ export default function App() {
       {currentView === 'admin' && currentOfficer && (
         <AdminLayout
           currentOfficer={currentOfficer}
+          visits={visits}
           activeMenu={adminMenu}
           onMenuChange={(menu) => setAdminMenu(menu)}
           onLogout={handleLogout}

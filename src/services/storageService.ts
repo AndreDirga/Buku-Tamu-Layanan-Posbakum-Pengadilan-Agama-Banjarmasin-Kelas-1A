@@ -1,6 +1,6 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
-import { broadcastNewVisit, subscribeToNewVisits } from './notificationService';
+import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications } from './notificationService';
 import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
 import { 
   collection, 
@@ -686,7 +686,14 @@ export const saveVisit = async (
     badgeColor: 'blue',
   });
 
-  // 5. Real-time notification trigger for admin dashboard & other open tabs across computers
+  // 5. Add to daily persistent notification store immediately
+  try {
+    addVisitToDailyNotifications(visitRecord);
+  } catch (notifErr) {
+    console.warn('Daily notification storage warning:', notifErr);
+  }
+
+  // 6. Real-time notification trigger for admin dashboard & other open tabs across computers
   broadcastNewVisit(visitRecord);
 
   return visitRecord;
