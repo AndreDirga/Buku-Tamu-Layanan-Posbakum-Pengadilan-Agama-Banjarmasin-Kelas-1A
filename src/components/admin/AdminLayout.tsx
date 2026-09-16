@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { CourtEmblem, PaBjmLogoIcon } from '../common/CourtEmblem';
 import { LiveClock } from '../common/LiveClock';
 import { OfficerUser } from '../../types/posbakum';
@@ -49,7 +49,9 @@ import {
   clearAllDailyNotifications,
   getTodayDateLabel,
   getTodayDateKey,
-  requestDesktopNotificationPermission
+  requestDesktopNotificationPermission,
+  isPopupAlreadyHandled,
+  markPopupAsHandled
 } from '../../services/notificationService';
 import { NewVisitNotificationPopup } from './NewVisitNotificationPopup';
 
@@ -123,6 +125,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     };
   }, [showNotificationsDropdown]);
 
+  const onRefreshDataRef = useRef(onRefreshData);
+  useEffect(() => {
+    onRefreshDataRef.current = onRefreshData;
+  }, [onRefreshData]);
+
+  const currentPopupVisitRef = useRef(currentPopupVisit);
+  useEffect(() => {
+    currentPopupVisitRef.current = currentPopupVisit;
+  }, [currentPopupVisit]);
+
+  const readVisitIdsRef = useRef(readVisitIds);
+  useEffect(() => {
+    readVisitIdsRef.current = readVisitIds;
+  }, [readVisitIds]);
+
   // Listen to incoming visits in real-time (cross-tab, Firestore, and same-window)
   useEffect(() => {
     const unsubscribe = subscribeToNewVisits((newVisit) => {
@@ -133,27 +150,49 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       setUnreadCount(res.unreadCount);
       setActiveDateKey(getTodayDateKey());
 
-      // Audio chime
-      playNotificationChime();
+      // If this visit is ALREADY read or its popup was already handled/opened, do NOT pop up again or play chime!
+      if (isPopupAlreadyHandled(newVisit)) {
+        return;
+      }
 
-      // Add to popup queue
+      // Add to popup queue if not already in queue or currently displayed
       setNotificationQueue((prev) => {
-        if (prev.some((v) => v.id === newVisit.id) || currentPopupVisit?.id === newVisit.id) {
+        if (
+          isPopupAlreadyHandled(newVisit) ||
+          prev.some((v) => v.id === newVisit.id || (newVisit.visitNumber && v.visitNumber === newVisit.visitNumber)) ||
+          currentPopupVisitRef.current?.id === newVisit.id ||
+          (newVisit.visitNumber && currentPopupVisitRef.current?.visitNumber === newVisit.visitNumber)
+        ) {
           return prev;
         }
         return [...prev, newVisit];
       });
 
       // Auto refresh data across table and dashboard
-      if (onRefreshData) {
+      if (onRefreshDataRef.current) {
         try {
-          onRefreshData();
+          onRefreshDataRef.current();
         } catch {}
       }
     });
 
     return unsubscribe;
-  }, [currentPopupVisit, onRefreshData]);
+  }, []);
+
+  // Whenever visits data syncs from server/Firestore, ensure any non-waiting visits or handled visits are purged from popup and queue
+  useEffect(() => {
+    if (visits && visits.length > 0) {
+      visits.forEach((v) => {
+        if (v && v.status && v.status !== 'Menunggu') {
+          markPopupAsHandled(v);
+        }
+      });
+      setNotificationQueue((prev) => prev.filter((v) => !isPopupAlreadyHandled(v)));
+      if (currentPopupVisit && isPopupAlreadyHandled(currentPopupVisit)) {
+        setCurrentPopupVisit(null);
+      }
+    }
+  }, [visits, currentPopupVisit]);
 
   // Periodic check to auto-reset when date rolls over to next day
   useEffect(() => {
@@ -172,18 +211,30 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     return () => clearInterval(interval);
   }, [activeDateKey]);
 
-  // Process queue into current popup
+  // Process queue into current popup, strictly filtering out any visits that are already read or handled
   useEffect(() => {
     if (!currentPopupVisit && notificationQueue.length > 0) {
-      const [nextVisit, ...remaining] = notificationQueue;
+      const validQueue = notificationQueue.filter((v) => !isPopupAlreadyHandled(v));
+      if (validQueue.length === 0) {
+        setNotificationQueue([]);
+        return;
+      }
+      const [nextVisit, ...remaining] = validQueue;
+      markPopupAsHandled(nextVisit);
       setCurrentPopupVisit(nextVisit);
       setNotificationQueue(remaining);
     }
-  }, [currentPopupVisit, notificationQueue]);
+  }, [currentPopupVisit, notificationQueue, readVisitIds]);
 
-  const handleDismissCurrentPopup = () => {
+  const handleDismissCurrentPopup = useCallback(() => {
+    if (currentPopupVisit) {
+      markPopupAsHandled(currentPopupVisit);
+      const res = markDailyNotificationAsRead(currentPopupVisit);
+      setReadVisitIds(res.readVisitIds);
+      setUnreadCount(res.unreadCount);
+    }
     setCurrentPopupVisit(null);
-  };
+  }, [currentPopupVisit]);
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -798,7 +849,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         queueCount={notificationQueue.length + (currentPopupVisit ? 1 : 0)}
         onDismiss={handleDismissCurrentPopup}
         onViewDetail={(visit) => {
-          const res = markDailyNotificationAsRead(visit.id);
+          markPopupAsHandled(visit);
+          const res = markDailyNotificationAsRead(visit);
           setReadVisitIds(res.readVisitIds);
           setUnreadCount(res.unreadCount);
           handleDismissCurrentPopup();
@@ -806,7 +858,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             onViewDetailVisit(visit);
           }
         }}
-        onNavigateToVisits={() => handleSelectMenu('visits')}
+        onNavigateToVisits={() => {
+          if (currentPopupVisit) {
+            markPopupAsHandled(currentPopupVisit);
+            const res = markDailyNotificationAsRead(currentPopupVisit);
+            setReadVisitIds(res.readVisitIds);
+            setUnreadCount(res.unreadCount);
+          }
+          handleDismissCurrentPopup();
+          handleSelectMenu('visits');
+        }}
       />
     </div>
   );

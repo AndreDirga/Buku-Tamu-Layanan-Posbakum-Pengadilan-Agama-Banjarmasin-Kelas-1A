@@ -41,28 +41,38 @@ export const NewVisitNotificationPopup: React.FC<NewVisitNotificationPopupProps>
   const [soundEnabled, setSoundEnabled] = useState(getNotificationSoundEnabled());
   const [progressPercent, setProgressPercent] = useState(100);
   const [isHovered, setIsHovered] = useState(false);
-  const timerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
+  const onDismissRef = useRef(onDismiss);
+  const lastPlayedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   const AUTO_DISMISS_SECONDS = 10;
 
-  // Sound and countdown timer whenever currentNotification changes
+  const notificationKey = currentNotification
+    ? (currentNotification.id || currentNotification.visitNumber || '')
+    : '';
+
+  // Sound and countdown timer whenever notificationKey changes
   useEffect(() => {
-    if (!currentNotification) {
+    if (!notificationKey) {
       setProgressPercent(100);
       return;
     }
 
-    // Play chime when notification arrives
-    playNotificationChime();
+    // Play chime ONLY once when a brand new notification key arrives
+    if (lastPlayedIdRef.current !== notificationKey) {
+      lastPlayedIdRef.current = notificationKey;
+      playNotificationChime();
+      setProgressPercent(100);
+    }
 
-    // Reset progress
-    setProgressPercent(100);
     const startTime = Date.now();
     const durationMs = AUTO_DISMISS_SECONDS * 1000;
 
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    if (timerRef.current) clearTimeout(timerRef.current);
 
     progressIntervalRef.current = setInterval(() => {
       if (!isHovered) {
@@ -71,16 +81,15 @@ export const NewVisitNotificationPopup: React.FC<NewVisitNotificationPopupProps>
         setProgressPercent(remaining);
         if (remaining <= 0) {
           clearInterval(progressIntervalRef.current);
-          onDismiss();
+          onDismissRef.current();
         }
       }
     }, 100);
 
     return () => {
       if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [currentNotification, isHovered, onDismiss]);
+  }, [notificationKey, isHovered]);
 
   const toggleSound = () => {
     const next = !soundEnabled;

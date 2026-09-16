@@ -4,8 +4,12 @@ import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const NOTIFICATION_CHANNEL_NAME = 'posbakum_realtime_channel';
 const SOUND_PREF_KEY = 'pabjm_notification_sound_enabled';
-const DAILY_NOTIFICATIONS_KEY = 'pabjm_daily_notifications_v2';
-const NOTIFIED_CACHE_KEY = 'pabjm_notified_visit_ids_session';
+const DAILY_NOTIFICATIONS_KEY = 'pabjm_daily_notifications_v3';
+const HANDLED_POPUPS_KEY = 'pabjm_handled_popups_v3';
+const PERMANENT_READ_KEY = 'pabjm_permanent_read_visits_v1';
+
+// In-memory set of handled IDs during the current session for 0ms lookup
+const sessionHandledIds = new Set<string>();
 
 // Helper to get local date key in YYYY-MM-DD format
 export const getTodayDateKey = (): string => {
@@ -14,6 +18,163 @@ export const getTodayDateKey = (): string => {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+// Permanent read IDs storage: tracks all visits read across sessions/dates
+export const getPermanentReadIds = (): string[] => {
+  if (typeof window === 'undefined') return Array.from(sessionHandledIds);
+  try {
+    const raw = localStorage.getItem(PERMANENT_READ_KEY);
+    if (!raw) return Array.from(sessionHandledIds);
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed) ? parsed : [];
+    list.forEach((id: string) => sessionHandledIds.add(id));
+    return list;
+  } catch {
+    return Array.from(sessionHandledIds);
+  }
+};
+
+export const addPermanentReadId = (idOrNumber: string): void => {
+  if (!idOrNumber || typeof window === 'undefined') return;
+  try {
+    sessionHandledIds.add(idOrNumber);
+    const list = getPermanentReadIds();
+    if (!list.includes(idOrNumber)) {
+      const updated = [...list, idOrNumber].slice(-1000); // Retain last 1000 IDs
+      localStorage.setItem(PERMANENT_READ_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+};
+
+// Handled popups store: tracks all popups displayed, dismissed, or viewed
+interface HandledPopupsStore {
+  handledIds: string[];
+}
+
+export const getHandledPopupStore = (): HandledPopupsStore => {
+  if (typeof window === 'undefined') {
+    return { handledIds: Array.from(sessionHandledIds) };
+  }
+  try {
+    const raw = localStorage.getItem(HANDLED_POPUPS_KEY);
+    if (!raw) return { handledIds: Array.from(sessionHandledIds) };
+    const parsed = JSON.parse(raw);
+    const handledList: string[] = Array.isArray(parsed?.handledIds)
+      ? parsed.handledIds
+      : Array.isArray(parsed)
+      ? parsed
+      : [];
+    handledList.forEach((id) => sessionHandledIds.add(id));
+    return { handledIds: handledList };
+  } catch {
+    return { handledIds: Array.from(sessionHandledIds) };
+  }
+};
+
+// Check if a popup has already been shown, opened, or dismissed for a visit
+export const isPopupAlreadyHandled = (visitOrId: Visit | string | null | undefined): boolean => {
+  if (!visitOrId) return true;
+
+  // 1. If it's a visit object, check status: any status other than 'Menunggu' has ALREADY been served or processed!
+  if (typeof visitOrId === 'object') {
+    if (visitOrId.status && visitOrId.status !== 'Menunggu') {
+      return true;
+    }
+    // Check age: if created more than 2 minutes (120s) ago, it is NOT a live popup!
+    const createdTime = new Date(visitOrId.visitedAt || visitOrId.createdAt || 0).getTime();
+    if (createdTime > 0 && Date.now() - createdTime > 120000) {
+      return true;
+    }
+  }
+
+  const idsToCheck: string[] = [];
+  if (typeof visitOrId === 'string') {
+    idsToCheck.push(visitOrId);
+    idsToCheck.push(visitOrId.replace(/[^a-zA-Z0-9]/g, ''));
+  } else {
+    if (visitOrId.id) {
+      idsToCheck.push(visitOrId.id);
+      idsToCheck.push(visitOrId.id.replace(/[^a-zA-Z0-9]/g, ''));
+    }
+    if (visitOrId.visitNumber) {
+      idsToCheck.push(visitOrId.visitNumber);
+      idsToCheck.push(visitOrId.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
+    }
+    if (visitOrId.name && (visitOrId.visitedAt || visitOrId.createdAt)) {
+      idsToCheck.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
+    }
+  }
+
+  // 2. Check in-memory session Set (0ms lookup)
+  for (const id of idsToCheck) {
+    if (id && sessionHandledIds.has(id)) return true;
+  }
+
+  // 3. Check permanent read list
+  const permanentRead = getPermanentReadIds();
+  for (const id of idsToCheck) {
+    if (id && permanentRead.includes(id)) {
+      sessionHandledIds.add(id);
+      return true;
+    }
+  }
+
+  // 4. Check handled popups store
+  const handledList = getHandledPopupStore().handledIds;
+  for (const id of idsToCheck) {
+    if (id && handledList.includes(id)) {
+      sessionHandledIds.add(id);
+      return true;
+    }
+  }
+
+  // 5. Check daily notification readVisitIds
+  const notifStore = getDailyNotificationStore();
+  for (const id of idsToCheck) {
+    if (id && notifStore.readVisitIds.includes(id)) {
+      sessionHandledIds.add(id);
+      return true;
+    }
+  }
+
+  return false;
+};
+
+// Mark a popup as handled so it never appears again on refresh, auto-sync, or polling
+export const markPopupAsHandled = (visitOrId: Visit | string | null | undefined): void => {
+  if (!visitOrId || typeof window === 'undefined') return;
+  try {
+    const idsToAdd: string[] = [];
+    if (typeof visitOrId === 'string') {
+      idsToAdd.push(visitOrId);
+      idsToAdd.push(visitOrId.replace(/[^a-zA-Z0-9]/g, ''));
+    } else {
+      if (visitOrId.id) {
+        idsToAdd.push(visitOrId.id);
+        idsToAdd.push(visitOrId.id.replace(/[^a-zA-Z0-9]/g, ''));
+      }
+      if (visitOrId.visitNumber) {
+        idsToAdd.push(visitOrId.visitNumber);
+        idsToAdd.push(visitOrId.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
+      }
+      if (visitOrId.name && (visitOrId.visitedAt || visitOrId.createdAt)) {
+        idsToAdd.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
+      }
+    }
+
+    idsToAdd.filter(Boolean).forEach((id) => {
+      sessionHandledIds.add(id);
+      addPermanentReadId(id);
+    });
+
+    const store = getHandledPopupStore();
+    const newItems = idsToAdd.filter((id) => id && !store.handledIds.includes(id));
+    if (newItems.length > 0) {
+      const updated = [...store.handledIds, ...newItems].slice(-1000);
+      localStorage.setItem(HANDLED_POPUPS_KEY, JSON.stringify({ handledIds: updated, updatedAt: Date.now() }));
+    }
+  } catch {}
 };
 
 // Helper to get friendly Indonesian date label for today
@@ -39,50 +200,47 @@ interface DailyNotificationStore {
 }
 
 export const getDailyNotificationStore = (): DailyNotificationStore => {
-  if (typeof window === 'undefined') {
-    return {
-      dateKey: getTodayDateKey(),
-      dateLabel: getTodayDateLabel(),
-      visits: [],
-      readVisitIds: [],
-    };
-  }
+  const todayKey = getTodayDateKey();
+  const permReads = getPermanentReadIds();
+
+  const defaultStore: DailyNotificationStore = {
+    dateKey: todayKey,
+    dateLabel: getTodayDateLabel(),
+    visits: [],
+    readVisitIds: permReads,
+  };
+
+  if (typeof window === 'undefined') return defaultStore;
+
   try {
     const raw = localStorage.getItem(DAILY_NOTIFICATIONS_KEY);
-    const todayKey = getTodayDateKey();
-    if (!raw) {
-      return {
-        dateKey: todayKey,
-        dateLabel: getTodayDateLabel(),
-        visits: [],
-        readVisitIds: [],
-      };
-    }
+    if (!raw) return defaultStore;
     const store = JSON.parse(raw);
-    // If the stored date is different from today, reset the history automatically
-    if (!store || store.dateKey !== todayKey) {
-      const resetStore: DailyNotificationStore = {
+    if (!store) return defaultStore;
+
+    const storedReads = Array.isArray(store.readVisitIds) ? store.readVisitIds : [];
+    const combinedReads = Array.from(new Set([...permReads, ...storedReads]));
+
+    // If the stored date is different from today, rollover visits but PRESERVE readVisitIds
+    if (store.dateKey !== todayKey) {
+      const rolloverStore: DailyNotificationStore = {
         dateKey: todayKey,
         dateLabel: getTodayDateLabel(),
         visits: [],
-        readVisitIds: [],
+        readVisitIds: combinedReads,
       };
-      localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(resetStore));
-      return resetStore;
+      localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(rolloverStore));
+      return rolloverStore;
     }
+
     return {
       dateKey: todayKey,
       dateLabel: store.dateLabel || getTodayDateLabel(),
       visits: Array.isArray(store.visits) ? store.visits : [],
-      readVisitIds: Array.isArray(store.readVisitIds) ? store.readVisitIds : [],
+      readVisitIds: combinedReads,
     };
   } catch (e) {
-    return {
-      dateKey: getTodayDateKey(),
-      dateLabel: getTodayDateLabel(),
-      visits: [],
-      readVisitIds: [],
-    };
+    return defaultStore;
   }
 };
 
@@ -120,14 +278,14 @@ export const saveDailyNotifications = (visits: Visit[]): void => {
   });
 };
 
-// Add new visit to today's notification history (new visit starts as unread)
+// Add new visit to today's notification history (preserves read status if already read)
 export const addVisitToDailyNotifications = (visit: Visit): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   const current = getDailyNotificationStore();
   // Avoid duplicates
   const filteredVisits = current.visits.filter((v) => v.id !== visit.id);
   const updatedVisits = [visit, ...filteredVisits].slice(0, 100);
-  // Ensure the new visit is NOT in readVisitIds so it counts as unread
-  const updatedReadIds = current.readVisitIds.filter((id) => id !== visit.id);
+  // Preserve read status! If visit is already read, do NOT strip it from readVisitIds!
+  const updatedReadIds = current.readVisitIds;
   
   const newStore: DailyNotificationStore = {
     ...current,
@@ -141,32 +299,44 @@ export const addVisitToDailyNotifications = (visit: Visit): { visits: Visit[]; r
 };
 
 // Mark a specific notification as opened/read
-export const markDailyNotificationAsRead = (visitId: string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
-  const current = getDailyNotificationStore();
-  if (!current.readVisitIds.includes(visitId)) {
-    const updatedReadIds = [...current.readVisitIds, visitId];
-    const newStore: DailyNotificationStore = {
-      ...current,
-      readVisitIds: updatedReadIds,
-    };
-    saveDailyNotificationStore(newStore);
-    const unreadCount = current.visits.filter((v) => !updatedReadIds.includes(v.id)).length;
-    return { visits: current.visits, readVisitIds: updatedReadIds, unreadCount };
+export const markDailyNotificationAsRead = (visitOrId: Visit | string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  markPopupAsHandled(visitOrId);
+  const idsToAdd: string[] = [];
+  if (typeof visitOrId === 'string') {
+    idsToAdd.push(visitOrId);
+  } else {
+    if (visitOrId.id) idsToAdd.push(visitOrId.id);
+    if (visitOrId.visitNumber) idsToAdd.push(visitOrId.visitNumber);
   }
-  const unreadCount = current.visits.filter((v) => !current.readVisitIds.includes(v.id)).length;
-  return { visits: current.visits, readVisitIds: current.readVisitIds, unreadCount };
+  idsToAdd.forEach((id) => addPermanentReadId(id));
+
+  const current = getDailyNotificationStore();
+  const updatedReadIds = Array.from(new Set([...current.readVisitIds, ...idsToAdd]));
+  const newStore: DailyNotificationStore = {
+    ...current,
+    readVisitIds: updatedReadIds,
+  };
+  saveDailyNotificationStore(newStore);
+
+  const unreadCount = current.visits.filter(
+    (v) => !updatedReadIds.includes(v.id) && (!v.visitNumber || !updatedReadIds.includes(v.visitNumber))
+  ).length;
+  return { visits: current.visits, readVisitIds: updatedReadIds, unreadCount };
 };
 
 // Mark all daily notifications as opened/read
 export const markAllDailyNotificationsAsRead = (): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   const current = getDailyNotificationStore();
-  const allIds = current.visits.map((v) => v.id);
+  current.visits.forEach((v) => markPopupAsHandled(v));
+  const allIds = current.visits.flatMap((v) => [v.id, v.visitNumber].filter(Boolean));
+  allIds.forEach((id) => addPermanentReadId(id));
+  const newReadIds = Array.from(new Set([...current.readVisitIds, ...allIds]));
   const newStore: DailyNotificationStore = {
     ...current,
-    readVisitIds: allIds,
+    readVisitIds: newReadIds,
   };
   saveDailyNotificationStore(newStore);
-  return { visits: current.visits, readVisitIds: allIds, unreadCount: 0 };
+  return { visits: current.visits, readVisitIds: newReadIds, unreadCount: 0 };
 };
 
 // Remove single notification by ID
@@ -346,21 +516,27 @@ export const broadcastNewVisit = async (visit: Visit) => {
 // In-memory map of notified visit IDs with timestamps to prevent duplicate triggers across channels
 const recentlyNotifiedVisits = new Map<string, number>();
 
-// Helper to check and mark if a visit has been notified on this computer session (debounces within 15 seconds)
-function markVisitAsNotified(visitId: string): boolean {
-  if (!visitId) return false;
-  const now = Date.now();
-  const lastTime = recentlyNotifiedVisits.get(visitId);
-  if (lastTime && now - lastTime < 15000) {
-    return false; // Already popped up in the last 15s
+// Helper to check and mark if a visit should trigger popup and chime notification
+function markVisitAsNotified(visit: Visit): boolean {
+  if (!visit || (!visit.id && !visit.visitNumber)) return false;
+
+  // 1. If visit is already read or popup already handled/shown/dismissed/opened, NEVER notify or pop up again!
+  if (isPopupAlreadyHandled(visit)) {
+    return false;
   }
-  recentlyNotifiedVisits.set(visitId, now);
-  // Cleanup old entries
-  if (recentlyNotifiedVisits.size > 100) {
-    for (const [id, time] of recentlyNotifiedVisits.entries()) {
-      if (now - time > 60000) recentlyNotifiedVisits.delete(id);
+
+  // 2. In-memory debounce: if ANY of its IDs was notified in the last 10 minutes, ignore duplicate channel pushes
+  const now = Date.now();
+  const keys = [visit.id, visit.visitNumber].filter(Boolean) as string[];
+  for (const k of keys) {
+    const lastTime = recentlyNotifiedVisits.get(k);
+    if (lastTime && now - lastTime < 600000) {
+      return false;
     }
   }
+
+  // Record debounce timestamp for all keys
+  keys.forEach((k) => recentlyNotifiedVisits.set(k, now));
   return true;
 }
 
@@ -370,6 +546,16 @@ export const syncDailyNotificationsWithVisits = (
 ): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   const current = getDailyNotificationStore();
   const todayKey = getTodayDateKey();
+  const permReads = getPermanentReadIds();
+
+  // Any visit that is already served, processed, or finished (status !== 'Menunggu') is AUTOMATICALLY marked as handled and read!
+  (allVisits || []).forEach((v) => {
+    if (v && v.status && v.status !== 'Menunggu') {
+      markPopupAsHandled(v);
+      if (v.id) permReads.push(v.id);
+      if (v.visitNumber) permReads.push(v.visitNumber);
+    }
+  });
 
   // Extract visits that occurred today
   const todayVisits = (allVisits || []).filter((v) => {
@@ -396,19 +582,23 @@ export const syncDailyNotificationsWithVisits = (
     return timeB - timeA;
   });
 
-  const unreadCount = mergedVisits.filter((v) => !current.readVisitIds.includes(v.id)).length;
+  const combinedReads = Array.from(new Set([...current.readVisitIds, ...permReads]));
+
+  const unreadCount = mergedVisits.filter(
+    (v) => !combinedReads.includes(v.id) && (!v.visitNumber || !combinedReads.includes(v.visitNumber))
+  ).length;
 
   const newStore: DailyNotificationStore = {
     dateKey: todayKey,
     dateLabel: current.dateLabel || getTodayDateLabel(),
     visits: mergedVisits,
-    readVisitIds: current.readVisitIds,
+    readVisitIds: combinedReads,
   };
   saveDailyNotificationStore(newStore);
 
   return {
     visits: mergedVisits,
-    readVisitIds: current.readVisitIds,
+    readVisitIds: combinedReads,
     unreadCount,
   };
 };
@@ -455,11 +645,19 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
   const listenerStartTime = Date.now();
 
   const handleIncomingVisit = (visit: Visit) => {
-    if (!visit || !visit.id) return;
-    // 1. Always ensure visit is in daily notification history
+    if (!visit || (!visit.id && !visit.visitNumber)) return;
+    if (!visit.id && visit.visitNumber) {
+      visit.id = visit.visitNumber;
+    }
+    // 1. If visit has already been read or popup already handled/opened, do NOT trigger popup or chime!
+    if (isPopupAlreadyHandled(visit)) {
+      addVisitToDailyNotifications(visit);
+      return;
+    }
+    // 2. Always ensure visit is in daily notification history
     addVisitToDailyNotifications(visit);
-    // 2. Debounce popup and sound trigger across multiple concurrent channels
-    if (markVisitAsNotified(visit.id)) {
+    // 3. Debounce popup and sound trigger across multiple concurrent channels
+    if (markVisitAsNotified(visit)) {
       onNewVisit(visit);
       showDesktopNotification(visit);
     }
@@ -504,18 +702,17 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
 
   // 4. Cloud Firestore cross-computer real-time listener (primary push across different computers)
   let unsubscribeFirestoreNotif: (() => void) | null = null;
-  let unsubscribeFirestoreVisits: (() => void) | null = null;
 
   try {
     const notifCol = collection(db, 'admin_notifications');
     unsubscribeFirestoreNotif = onSnapshot(notifCol, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
+        if (change.type === 'added') {
           const data = change.doc.data();
           if (data && data.visit) {
-            // Only trigger if notification is recent (created within 20s before listener or after)
+            // Only trigger if notification is genuinely recent (created within the last 30 seconds)
             const docTime = data.timestamp || new Date(data.createdAt || 0).getTime();
-            if (docTime >= listenerStartTime - 20000) {
+            if (docTime >= Date.now() - 30000) {
               handleIncomingVisit(data.visit as Visit);
             }
           }
@@ -528,26 +725,8 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     console.warn('Could not start Firestore notification listener:', e);
   }
 
-  // 5. Cloud Firestore visits collection listener (secondary layer)
-  try {
-    const visitsCol = collection(db, 'visits');
-    unsubscribeFirestoreVisits = onSnapshot(visitsCol, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data() as Visit;
-          if (data && data.id) {
-            const visitTime = new Date(data.visitedAt || data.createdAt || 0).getTime();
-            if (visitTime >= listenerStartTime - 20000) {
-              handleIncomingVisit(data);
-            }
-          }
-        }
-      });
-    }, () => {});
-  } catch (e) {}
-
-  // 6. Server fallback polling every 3 seconds (guarantees delivery if Firestore WebSockets are offline)
-  let lastServerPollTime = listenerStartTime - 10000;
+  // 5. Server fallback polling every 3 seconds (guarantees delivery if Firestore WebSockets are offline)
+  let lastServerPollTime = listenerStartTime - 5000;
   const pollInterval = setInterval(async () => {
     try {
       const res = await fetch(`/api/notifications/recent?since=${lastServerPollTime}`);
@@ -556,7 +735,11 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         if (result.success && Array.isArray(result.data)) {
           result.data.forEach((item: any) => {
             if (item?.visit) {
-              handleIncomingVisit(item.visit);
+              const itemTime = item.timestamp || new Date(item.createdAt || 0).getTime();
+              // Only trigger if within the last 30 seconds
+              if (itemTime >= Date.now() - 30000) {
+                handleIncomingVisit(item.visit);
+              }
             }
             if (item?.timestamp && item.timestamp > lastServerPollTime) {
               lastServerPollTime = item.timestamp;
@@ -578,11 +761,6 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     if (unsubscribeFirestoreNotif) {
       try {
         unsubscribeFirestoreNotif();
-      } catch (e) {}
-    }
-    if (unsubscribeFirestoreVisits) {
-      try {
-        unsubscribeFirestoreVisits();
       } catch (e) {}
     }
     clearInterval(pollInterval);

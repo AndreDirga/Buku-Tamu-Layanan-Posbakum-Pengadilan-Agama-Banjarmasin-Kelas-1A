@@ -447,24 +447,6 @@ export const fetchVisits = async (): Promise<Visit[]> => {
       syncLocalVisitsToServer(needsServerSync).catch(() => {});
     }
 
-    // Cross-sync: If Server or local had visits/images that Firestore lacked or had as SVG
-    const firestoreMap = new Map(firestoreVisits.map((v) => [v.id, v]));
-    const needsFirestoreSync = fullyMerged.filter((v) => {
-      if (!v.id) return false;
-      const f = firestoreMap.get(v.id);
-      if (!f) return true;
-      const restoredSelfie = isRealUserImage(v.selfieUrl) && !isRealUserImage(f.selfieUrl);
-      const restoredSig = isRealUserImage(v.signatureUrl) && !isRealUserImage(f.signatureUrl);
-      return restoredSelfie || restoredSig;
-    });
-
-    if (needsFirestoreSync.length > 0) {
-      console.log(`[Posbakum] Syncing ${needsFirestoreSync.length} restored visits to Firestore...`);
-      needsFirestoreSync.forEach((v) => {
-        setDoc(doc(db, 'visits', v.id), sanitizeForFirestore(v), { merge: true }).catch(() => {});
-      });
-    }
-
     return fullyMerged;
   }
 
@@ -561,12 +543,18 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   window.addEventListener('storage', handleStorageChange);
   window.addEventListener('focus', handleFocus);
 
-  // 4. BroadcastChannel listener
-  const unsubBroadcast = subscribeToNewVisits(() => {
-    if (isSubscribed) {
-      syncFromServer();
+  // 4. BroadcastChannel listener for cross-tab sync
+  let broadcastChannel: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      broadcastChannel = new BroadcastChannel('posbakum_sync_channel');
+      broadcastChannel.onmessage = () => {
+        if (isSubscribed) {
+          syncFromServer();
+        }
+      };
     }
-  });
+  } catch {}
 
   return () => {
     isSubscribed = false;
@@ -574,7 +562,11 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     clearInterval(intervalId);
     window.removeEventListener('storage', handleStorageChange);
     window.removeEventListener('focus', handleFocus);
-    unsubBroadcast();
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.close();
+      } catch {}
+    }
   };
 };
 

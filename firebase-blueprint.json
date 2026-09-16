@@ -1,0 +1,106 @@
+{
+  "entities": {
+    "Visit": {
+      "title": "Visit",
+      "description": "Buku tamu digital layanan Posbakum Pengadilan Agama Banjarmasin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "visitNumber": { "type": "string" },
+        "name": { "type": "string" },
+        "nik": { "type": "string" },
+        "ktpAddress": { "type": "string" },
+        "domicileAddress": { "type": "string" },
+        "domicileSameAsKtp": { "type": "boolean" },
+        "email": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "occupation": { "type": "string" },
+        "caseCategory": { "type": "string" },
+        "caseType": { "type": "string" },
+        "selfieUrl": { "type": "string" },
+        "selfieFileName": { "type": "string" },
+        "signatureUrl": { "type": "string" },
+        "signatureFileName": { "type": "string" },
+        "qrToken": { "type": "string" },
+        "status": { "type": "string", "enum": ["Menunggu", "Sedang Dilayani", "Diproses", "Selesai", "Dibatalkan"] },
+        "visitedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "dateDisplay": { "type": "string" },
+        "timeDisplay": { "type": "string" },
+        "notes": { "type": "string" },
+        "officerName": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "status", "visitedAt"]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "Notifikasi real-time kedatangan tamu untuk admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "visit": { "type": "object" },
+        "timestamp": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "timestamp"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Log aktivitas petugas dan sistem Posbakum",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "officerName": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "action", "timestamp"]
+    },
+    "AdminDevice": {
+      "title": "AdminDevice",
+      "description": "Perangkat komputer petugas admin terdaftar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "lastActive": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "QrToken": {
+      "title": "QrToken",
+      "description": "Token QR code meja layanan Posbakum",
+      "type": "object",
+      "properties": {
+        "tokenId": { "type": "string" },
+        "label": { "type": "string" },
+        "deskName": { "type": "string" }
+      },
+      "required": ["tokenId"]
+    }
+  },
+  "firestore": {
+    "/visits/{visitId}": {
+      "schema": { "$ref": "#/entities/Visit" },
+      "description": "Daftar kunjungan tamu Posbakum"
+    },
+    "/admin_notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AdminNotification" },
+      "description": "Notifikasi real-time kedatangan tamu baru"
+    },
+    "/activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Audit trail log aktivitas admin"
+    },
+    "/admin_devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/AdminDevice" },
+      "description": "Perangkat admin yang terhubung"
+    },
+    "/qr_tokens/{tokenId}": {
+      "schema": { "$ref": "#/entities/QrToken" },
+      "description": "Token QR meja layanan"
+    }
+  }
+}

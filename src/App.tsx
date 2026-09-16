@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Visit, OfficerUser } from './types/posbakum';
 import { 
   getStoredVisits, 
@@ -9,6 +9,7 @@ import {
   deleteVisit,
   deleteMultipleVisits
 } from './services/storageService';
+import { markDailyNotificationAsRead, markPopupAsHandled } from './services/notificationService';
 
 // Public / Guest & Portal Components
 import { CourtEmblem } from './components/common/CourtEmblem';
@@ -128,9 +129,15 @@ export default function App() {
     }
   };
 
-  const handleManualSync = async () => {
+  const handleManualSync = useCallback(async () => {
     await refreshVisits();
-  };
+  }, []);
+
+  const handleOpenVisitDetail = useCallback((v: Visit) => {
+    markPopupAsHandled(v);
+    markDailyNotificationAsRead(v);
+    setSelectedVisitForModal(v);
+  }, []);
 
   const handleDeleteVisit = async (visitId: string) => {
     await deleteVisit(visitId, currentOfficer?.name || 'Admin');
@@ -262,14 +269,14 @@ export default function App() {
           onMenuChange={(menu) => setAdminMenu(menu)}
           onLogout={handleLogout}
           onOpenPublicGuestbook={() => setCurrentView('guest')}
-          onViewDetailVisit={(v) => setSelectedVisitForModal(v)}
+          onViewDetailVisit={handleOpenVisitDetail}
           onRefreshData={handleManualSync}
           isSyncing={isSyncing}
         >
           {adminMenu === 'dashboard' && (
             <DashboardOverview
               visits={visits}
-              onViewDetail={(v) => setSelectedVisitForModal(v)}
+              onViewDetail={handleOpenVisitDetail}
               onNavigateToVisits={() => setAdminMenu('visits')}
               onNavigateToStats={() => setAdminMenu('statistics')}
               onNavigateToExport={() => setAdminMenu('export')}
@@ -280,7 +287,7 @@ export default function App() {
           {adminMenu === 'visits' && (
             <VisitsList
               visits={visits}
-              onViewDetail={(v) => setSelectedVisitForModal(v)}
+              onViewDetail={handleOpenVisitDetail}
               onNavigateToExport={() => setAdminMenu('export')}
               onDeleteVisit={handleDeleteVisit}
               onDeleteMultipleVisits={handleDeleteMultipleVisits}
