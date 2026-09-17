@@ -275,15 +275,90 @@ export async function saveVisitsToIndexedDB(visits: Visit[]): Promise<void> {
   try {
     const database = await openVisitsDB();
     if (!database) return;
-    const tx = database.transaction(IDB_STORE, 'readwrite');
-    const store = tx.objectStore(IDB_STORE);
-    for (const v of visits) {
-      if (v && v.id) {
-        store.put(v);
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      for (const v of visits) {
+        if (v && v.id) {
+          store.put(v);
+        }
       }
-    }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
   } catch (err) {
     console.warn('IndexedDB save warning:', err);
+  }
+}
+
+export async function saveSingleVisitToIndexedDB(visit: Visit): Promise<void> {
+  if (!visit || !visit.id) return;
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(visit);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (err) {
+    console.warn('IndexedDB single save warning:', err);
+  }
+}
+
+export async function deleteVisitFromIndexedDB(visitId: string): Promise<void> {
+  if (!visitId) return;
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.delete(visitId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (err) {
+    console.warn('IndexedDB delete warning:', err);
+  }
+}
+
+export async function deleteMultipleVisitsFromIndexedDB(visitIds: string[]): Promise<void> {
+  if (!visitIds || visitIds.length === 0) return;
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      for (const id of visitIds) {
+        if (id) {
+          store.delete(id);
+        }
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (err) {
+    console.warn('IndexedDB bulk delete warning:', err);
+  }
+}
+
+export async function clearVisitsFromIndexedDB(): Promise<void> {
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (err) {
+    console.warn('IndexedDB clear warning:', err);
   }
 }
 
@@ -595,9 +670,11 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
       return timeB - timeA;
     });
 
-    // Check if data actually changed
-    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
-    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
+    // Check if data actually changed (including high-resolution photo/signature hydration)
+    const getVisitSignatureKey = (v: Visit) => 
+      `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}_${v.selfieUrl ? (v.selfieUrl.startsWith('data:image/svg') ? 'svg' : 'real') : 'none'}_${v.signatureUrl ? (v.signatureUrl.startsWith('data:image/svg') ? 'svg' : 'real') : 'none'}`;
+    const oldKeys = currentVisits.map(getVisitSignatureKey).join('|');
+    const newKeys = merged.map(getVisitSignatureKey).join('|');
 
     if (newKeys !== oldKeys || currentVisits.length !== merged.length) {
       currentVisits = merged;
@@ -886,8 +963,9 @@ export const updateVisitDetails = async (
 
   visits[index] = updatedVisit;
 
-  // Local storage update
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
+  // Local storage & IndexedDB update
+  safeSaveVisitsToStorage(visits);
+  saveSingleVisitToIndexedDB(updatedVisit).catch(() => {});
 
   // Server API update
   try {
@@ -965,9 +1043,10 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
   const visits = getStoredVisits();
   const target = visits.find((v) => v.id === visitId);
 
-  // 1. Local cache update immediately
+  // 1. Local cache and IndexedDB update immediately
   const updated = visits.filter((v) => v.id !== visitId);
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  safeSaveVisitsToStorage(updated);
+  deleteVisitFromIndexedDB(visitId).catch(() => {});
 
   // 2. Server API deletion
   try {
@@ -1021,8 +1100,9 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
   const updated = visits.filter((v) => !visitIds.includes(v.id));
   const deletedCount = countBefore - updated.length || visitIds.length;
 
-  // 1. Local cache update
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  // 1. Local cache and IndexedDB update
+  safeSaveVisitsToStorage(updated);
+  deleteMultipleVisitsFromIndexedDB(visitIds).catch(() => {});
 
   // 2. Server API bulk delete
   try {
@@ -1096,8 +1176,9 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
   const visits = getStoredVisits();
   const totalCount = visits.length;
 
-  // 1. Clear local storage
+  // 1. Clear local storage & IndexedDB
   localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
+  clearVisitsFromIndexedDB().catch(() => {});
 
   // 2. Server API bulk delete
   try {
