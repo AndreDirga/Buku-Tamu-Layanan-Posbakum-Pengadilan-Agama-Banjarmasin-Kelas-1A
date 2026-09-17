@@ -222,8 +222,102 @@ function saveLogsToDisk(logs: any[]): void {
   }
 }
 
+// Helper to obtain authoritative date/time in Asia/Makassar (WITA, UTC+8)
+function getWitaDateInfo(dateInput?: Date | string | number) {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const valid = isNaN(d.getTime()) ? new Date() : d;
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Makassar',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(valid);
+    const getP = (type: string) => parts.find((p) => p.type === type)?.value || '';
+    const y = parseInt(getP('year'), 10) || valid.getFullYear();
+    const m = getP('month').padStart(2, '0');
+    const dStr = getP('day').padStart(2, '0');
+    let h = getP('hour').padStart(2, '0');
+    if (h === '24') h = '00';
+    const min = getP('minute').padStart(2, '0');
+    const dateStr = `${y}${m}${dStr}`;
+    const todayPrefix = `KJG-${dateStr}-`;
+    return { y, m, d: dStr, h, min, dateStr, todayPrefix };
+  } catch {
+    const utc = valid.getTime() + valid.getTimezoneOffset() * 60000;
+    const w = new Date(utc + 8 * 3600000);
+    const y = w.getFullYear();
+    const m = String(w.getMonth() + 1).padStart(2, '0');
+    const dStr = String(w.getDate()).padStart(2, '0');
+    const h = String(w.getHours()).padStart(2, '0');
+    const min = String(w.getMinutes()).padStart(2, '0');
+    const dateStr = `${y}${m}${dStr}`;
+    const todayPrefix = `KJG-${dateStr}-`;
+    return { y, m, d: dStr, h, min, dateStr, todayPrefix };
+  }
+}
+
+// Enforce strictly unique, chronologically sequential queue numbers across visits
+function enforceUniqueQueueNumbers(list: any[]): boolean {
+  if (!Array.isArray(list) || list.length === 0) return false;
+  let changed = false;
+  const groups = new Map<string, any[]>();
+
+  list.forEach((v) => {
+    if (!v) return;
+    const { todayPrefix } = getWitaDateInfo(v.visitedAt || v.createdAt);
+    if (!groups.has(todayPrefix)) groups.set(todayPrefix, []);
+    groups.get(todayPrefix)!.push(v);
+  });
+
+  groups.forEach((items, prefix) => {
+    items.sort((a, b) => {
+      const tA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+      const tB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+      return tA - tB;
+    });
+
+    const usedNumbers = new Set<string>();
+    let maxSeq = 0;
+
+    items.forEach((item) => {
+      let num = item.visitNumber;
+      if (!num || !num.startsWith(prefix) || usedNumbers.has(num)) {
+        maxSeq++;
+        num = `${prefix}${String(maxSeq).padStart(4, '0')}`;
+        while (usedNumbers.has(num)) {
+          maxSeq++;
+          num = `${prefix}${String(maxSeq).padStart(4, '0')}`;
+        }
+        item.visitNumber = num;
+        changed = true;
+      } else {
+        const parts = num.split('-');
+        const seq = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+      usedNumbers.add(item.visitNumber);
+    });
+  });
+
+  return changed;
+}
+
 // In-memory cache synced with disk
 let visitsCache: any[] = readVisitsFromDisk();
+if (enforceUniqueQueueNumbers(visitsCache)) {
+  saveVisitsToDisk(visitsCache);
+  console.log('[Server] Startup queue numbers sanitized and saved.');
+}
+
+// Mutex lock promise queue to guarantee atomic queue numbers under concurrent requests
+let visitSaveQueue: Promise<any> = Promise.resolve();
 
 // Real-time cross-computer notification buffer
 interface ServerNotification {
@@ -315,6 +409,7 @@ async function syncServerWithFirestore() {
 
       if (hasChanges) {
         const mergedList = Array.from(currentMap.values());
+        enforceUniqueQueueNumbers(mergedList);
         mergedList.sort((a, b) => {
           const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
           const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
@@ -426,16 +521,11 @@ app.get('/api/visits', (req, res) => {
   }
 });
 
-// GET next available queue number for today
+// GET next available queue number for today (guaranteed WITA timezone)
 app.get('/api/visits/next-number', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   try {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    const dateStr = `${y}${m}${d}`;
-    const todayPrefix = `KJG-${dateStr}-`;
+    const { dateStr, todayPrefix } = getWitaDateInfo();
 
     let maxSeq = 0;
     visitsCache.forEach((v) => {
@@ -455,108 +545,130 @@ app.get('/api/visits/next-number', (req, res) => {
   }
 });
 
-// POST new visit (atomically assigned queue number & instant storage)
-app.post('/api/visits', (req, res) => {
-  try {
-    const newVisit = req.body;
-    if (!newVisit || !newVisit.name) {
-      return res.status(400).json({ success: false, message: 'Data kunjungan tidak valid.' });
-    }
+// POST new visit (atomically assigned queue number & instant storage under serialization lock)
+app.post('/api/visits', async (req, res) => {
+  // Enqueue this save request to avoid concurrent race-conditions creating duplicate numbers
+  visitSaveQueue = visitSaveQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        const newVisit = req.body;
+        if (!newVisit || !newVisit.name) {
+          return res.status(400).json({ success: false, message: 'Data kunjungan tidak valid.' });
+        }
 
-    const now = new Date(newVisit.visitedAt || Date.now());
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    const dateStr = `${y}${m}${d}`;
-    const todayPrefix = `KJG-${dateStr}-`;
+        const { dateStr, todayPrefix, y, m, d, h, min } = getWitaDateInfo(newVisit.visitedAt || Date.now());
 
-    // Check if visitNumber already exists in cache or needs generation
-    const isVisitNumberTaken = newVisit.visitNumber && visitsCache.some((v) => v.visitNumber === newVisit.visitNumber && v.id !== newVisit.id);
+        // Check if visitNumber already exists in cache or needs authoritative generation
+        const isVisitNumberTaken = Boolean(
+          newVisit.visitNumber &&
+          visitsCache.some((v) => v.visitNumber === newVisit.visitNumber && v.id !== newVisit.id)
+        );
 
-    if (!newVisit.visitNumber || isVisitNumberTaken) {
-      let maxSeq = 0;
-      visitsCache.forEach((v) => {
-        if (v.visitNumber && typeof v.visitNumber === 'string' && v.visitNumber.startsWith(todayPrefix)) {
-          const parts = v.visitNumber.split('-');
-          const lastPart = parseInt(parts[parts.length - 1], 10);
-          if (!isNaN(lastPart) && lastPart > maxSeq) {
-            maxSeq = lastPart;
+        if (!newVisit.visitNumber || isVisitNumberTaken || !newVisit.visitNumber.startsWith(todayPrefix)) {
+          let maxSeq = 0;
+          visitsCache.forEach((v) => {
+            if (v.visitNumber && typeof v.visitNumber === 'string' && v.visitNumber.startsWith(todayPrefix)) {
+              const parts = v.visitNumber.split('-');
+              const lastPart = parseInt(parts[parts.length - 1], 10);
+              if (!isNaN(lastPart) && lastPart > maxSeq) {
+                maxSeq = lastPart;
+              }
+            }
+          });
+          newVisit.visitNumber = `${todayPrefix}${String(maxSeq + 1).padStart(4, '0')}`;
+        }
+
+        // Ensure ID and timestamps
+        if (!newVisit.id) {
+          newVisit.id = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        }
+        if (!newVisit.visitedAt) {
+          newVisit.visitedAt = new Date().toISOString();
+        }
+        if (!newVisit.createdAt) {
+          newVisit.createdAt = new Date().toISOString();
+        }
+
+        // Ensure date & time display in accurate Indonesian WITA format
+        if (!newVisit.dateDisplay || !newVisit.timeDisplay) {
+          const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+          const monthNames = [
+            'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+            'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+          ];
+          const dObj = new Date(newVisit.visitedAt);
+          const dayIdx = isNaN(dObj.getDay()) ? 0 : dObj.getDay();
+          const mIdx = Math.max(0, Math.min(11, parseInt(m, 10) - 1));
+
+          newVisit.dateDisplay = newVisit.dateDisplay || `${dayNames[dayIdx]}, ${parseInt(d, 10)} ${monthNames[mIdx]} ${y}`;
+          newVisit.timeDisplay = newVisit.timeDisplay || `${h}:${min} WITA`;
+        }
+
+        // Only update if exact same ID exists, otherwise prepend as a fresh record
+        const existingIndex = visitsCache.findIndex((v) => v.id === newVisit.id);
+        if (existingIndex >= 0) {
+          visitsCache[existingIndex] = { ...visitsCache[existingIndex], ...newVisit };
+        } else {
+          // Detect accidental rapid double submissions from the same guest
+          const recentDuplicateIndex = visitsCache.findIndex(
+            (v) =>
+              v.name &&
+              newVisit.name &&
+              v.name.trim().toLowerCase() === newVisit.name.trim().toLowerCase() &&
+              v.whatsapp === newVisit.whatsapp &&
+              Math.abs(new Date(v.visitedAt || v.createdAt || 0).getTime() - new Date(newVisit.visitedAt || newVisit.createdAt || 0).getTime()) < 60000
+          );
+          if (recentDuplicateIndex >= 0) {
+            visitsCache[recentDuplicateIndex] = { ...visitsCache[recentDuplicateIndex], ...newVisit, id: visitsCache[recentDuplicateIndex].id };
+            newVisit.id = visitsCache[recentDuplicateIndex].id;
+            newVisit.visitNumber = visitsCache[recentDuplicateIndex].visitNumber;
+          } else {
+            visitsCache = [newVisit, ...visitsCache];
           }
         }
-      });
-      newVisit.visitNumber = `${todayPrefix}${String(maxSeq + 1).padStart(4, '0')}`;
-    }
 
-    // Ensure ID and timestamps
-    if (!newVisit.id) {
-      newVisit.id = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    }
-    if (!newVisit.visitedAt) {
-      newVisit.visitedAt = now.toISOString();
-    }
-    if (!newVisit.createdAt) {
-      newVisit.createdAt = new Date().toISOString();
-    }
+        // Sanity check to enforce queue number uniqueness across whole list
+        enforceUniqueQueueNumbers(visitsCache);
 
-    // Ensure date & time display
-    if (!newVisit.dateDisplay || !newVisit.timeDisplay) {
-      const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-      const monthNames = [
-        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-      ];
-      newVisit.dateDisplay = newVisit.dateDisplay || `${dayNames[now.getDay()]}, ${now.getDate()} ${monthNames[now.getMonth()]} ${y}`;
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      newVisit.timeDisplay = newVisit.timeDisplay || `${hours}:${minutes} WITA`;
-    }
+        // Keep visitsCache strictly sorted descending by visitedAt/createdAt (newest first)
+        visitsCache.sort((a, b) => {
+          const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+          const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
 
-    // Only update if exact same ID exists, otherwise prepend as a fresh record
-    const existingIndex = visitsCache.findIndex((v) => v.id === newVisit.id);
-    if (existingIndex >= 0) {
-      visitsCache[existingIndex] = { ...visitsCache[existingIndex], ...newVisit };
-    } else {
-      visitsCache = [newVisit, ...visitsCache];
-    }
+        saveVisitsToDisk(visitsCache);
 
-    // Keep visitsCache strictly sorted descending by visitedAt/createdAt (newest first)
-    visitsCache.sort((a, b) => {
-      const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
-      const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
-      return timeB - timeA;
+        // Register notification in server buffer for cross-computer real-time distribution
+        const notifItem: ServerNotification = {
+          id: `notif-${newVisit.id}-${Date.now()}`,
+          visitId: newVisit.id,
+          visit: newVisit,
+          timestamp: Date.now(),
+          createdAt: new Date().toISOString(),
+        };
+        recentNotifications = [notifItem, ...recentNotifications.filter((n) => n.visitId !== newVisit.id)].slice(0, 50);
+
+        // Asynchronously replicate to Cloud Firestore (non-blocking for quota resilience)
+        if (serverFirestoreDb) {
+          setDoc(doc(serverFirestoreDb, 'visits', newVisit.id), newVisit, { merge: true }).catch((fsErr: any) => {
+            console.warn('[Server Firestore] Write notice (persisted safely to server disk):', fsErr.message);
+          });
+          setDoc(doc(serverFirestoreDb, 'admin_notifications', notifItem.id), notifItem, { merge: true }).catch(() => {});
+        }
+
+        return res.json({
+          success: true,
+          message: 'Kunjungan berhasil disimpan di server database.',
+          data: newVisit,
+          totalVisits: visitsCache.length,
+        });
+      } catch (err: any) {
+        console.error('Failed to POST /api/visits:', err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
     });
-
-    saveVisitsToDisk(visitsCache);
-
-    // Register notification in server buffer for cross-computer real-time distribution
-    const notifItem: ServerNotification = {
-      id: `notif-${newVisit.id}-${Date.now()}`,
-      visitId: newVisit.id,
-      visit: newVisit,
-      timestamp: Date.now(),
-      createdAt: new Date().toISOString(),
-    };
-    recentNotifications = [notifItem, ...recentNotifications.filter((n) => n.visitId !== newVisit.id)].slice(0, 50);
-
-    // Asynchronously replicate to Cloud Firestore for cross-computer real-time distribution
-    if (serverFirestoreDb) {
-      setDoc(doc(serverFirestoreDb, 'visits', newVisit.id), newVisit, { merge: true }).catch((fsErr: any) => {
-        console.warn('[Server Firestore] Write warning:', fsErr.message);
-      });
-      // Also write to admin_notifications collection
-      setDoc(doc(serverFirestoreDb, 'admin_notifications', notifItem.id), notifItem, { merge: true }).catch(() => {});
-    }
-
-    res.json({
-      success: true,
-      message: 'Kunjungan berhasil disimpan di server database.',
-      data: newVisit,
-      totalVisits: visitsCache.length,
-    });
-  } catch (err: any) {
-    console.error('Failed to POST /api/visits:', err);
-    res.status(500).json({ success: false, message: err.message });
-  }
 });
 
 // POST sync multiple visits (merges client visits from localStorage into server database)
@@ -594,6 +706,9 @@ app.post('/api/visits/sync', (req, res) => {
     });
 
     const merged = Array.from(map.values());
+    // Ensure strict queue number uniqueness across all visits
+    enforceUniqueQueueNumbers(merged);
+
     // Sort descending by visitedAt
     merged.sort((a, b) => {
       const timeA = new Date(a.createdAt || a.visitedAt || 0).getTime();

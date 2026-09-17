@@ -169,9 +169,6 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
           <label className="block text-[11px] font-semibold text-slate-700">
             Foto Selfie / Wajah Pengunjung <span className="text-rose-600">*</span>
           </label>
-          <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100/80 px-1.5 py-0.5 rounded border border-emerald-300">
-            Maks 150 KB
-          </span>
         </div>
         {photoDataUrl && (
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
@@ -182,7 +179,7 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
       </div>
 
       <p className="text-[10px] text-slate-500">
-        Posisikan wajah Anda di dalam bingkai oval. Foto otomatis dikonversi berukuran maksimal ~150 KB demi efisiensi dan keamanan basis data.
+        Posisikan wajah Anda di dalam bingkai oval. Foto otomatis dioptimalkan demi efisiensi dan keamanan basis data.
       </p>
 
       {/* Main Camera / Preview Box */}
@@ -195,7 +192,7 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
         {isCompressing && (
           <div className="absolute inset-0 bg-slate-900/90 z-40 flex flex-col items-center justify-center text-white text-xs gap-2 p-4 text-center">
             <RefreshCw className="w-5 h-5 animate-spin text-emerald-400" />
-            <span className="font-bold text-slate-100">Mengonversi Foto ke 150 KB...</span>
+            <span className="font-bold text-slate-100">Mengonversi Foto...</span>
             <span className="text-[10px] text-slate-300">Mengoptimalkan resolusi dan ketajaman wajah</span>
           </div>
         )}
@@ -295,13 +292,13 @@ export const CameraSelfie: React.FC<CameraSelfieProps> = ({
             className="flex-1 max-w-xs py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition disabled:opacity-60"
           >
             <Camera className="w-4 h-4" />
-            <span>Ambil Foto Selfie (~150 KB)</span>
+            <span>Ambil Foto Selfie</span>
           </button>
           <button
             type="button"
             disabled={isCompressing}
             onClick={() => fileInputRef.current?.click()}
-            title="Unggah dari file (Otomatis dikompresi ke 150 KB)"
+            title="Unggah dari file"
             className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-300 transition"
           >
             <Upload className="w-4 h-4" />

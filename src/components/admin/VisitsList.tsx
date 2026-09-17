@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
+import { getVisitDateYMD } from '../../utils/dateUtils';
 import { SafeVisitImage } from '../common/SafeVisitImage';
 import { 
   Search, 
@@ -90,17 +91,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
 
       // Date Range filter
       if (startDate || endDate) {
-        const d = new Date(v.visitedAt || v.createdAt || 0);
-        let visitDate = '';
-        if (!isNaN(d.getTime())) {
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          visitDate = `${y}-${m}-${day}`;
-        } else {
-          visitDate = (v.visitedAt || '').substring(0, 10);
-        }
-
+        const visitDate = getVisitDateYMD(v) || (v.visitedAt || '').substring(0, 10);
         if (startDate && visitDate < startDate) return false;
         if (endDate && visitDate > endDate) return false;
       }

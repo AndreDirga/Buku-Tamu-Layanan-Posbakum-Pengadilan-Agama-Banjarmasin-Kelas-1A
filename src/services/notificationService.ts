@@ -101,8 +101,18 @@ export const isPopupAlreadyHandled = (visitOrId: Visit | string | null | undefin
       idsToCheck.push(visitOrId.visitNumber);
       idsToCheck.push(visitOrId.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
     }
-    if (visitOrId.name && (visitOrId.visitedAt || visitOrId.createdAt)) {
-      idsToCheck.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
+    if (visitOrId.name) {
+      const cleanName = visitOrId.name.trim().toLowerCase();
+      idsToCheck.push(`name_${cleanName}`);
+      if (visitOrId.visitNumber) {
+        idsToCheck.push(`${cleanName}_${visitOrId.visitNumber}`);
+      }
+      if (visitOrId.whatsapp) {
+        idsToCheck.push(`${cleanName}_${visitOrId.whatsapp}`);
+      }
+      if (visitOrId.visitedAt || visitOrId.createdAt) {
+        idsToCheck.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
+      }
     }
   }
 
@@ -146,30 +156,50 @@ export const markPopupAsHandled = (visitOrId: Visit | string | null | undefined)
   if (!visitOrId || typeof window === 'undefined') return;
   try {
     const idsToAdd: string[] = [];
+    let matchedVisit: Visit | undefined;
+
     if (typeof visitOrId === 'string') {
       idsToAdd.push(visitOrId);
       idsToAdd.push(visitOrId.replace(/[^a-zA-Z0-9]/g, ''));
+      // Attempt lookup from current daily store to find full guest details
+      const store = getDailyNotificationStore();
+      matchedVisit = store.visits.find((v) => v.id === visitOrId || v.visitNumber === visitOrId);
     } else {
-      if (visitOrId.id) {
-        idsToAdd.push(visitOrId.id);
-        idsToAdd.push(visitOrId.id.replace(/[^a-zA-Z0-9]/g, ''));
+      matchedVisit = visitOrId;
+    }
+
+    if (matchedVisit) {
+      if (matchedVisit.id) {
+        idsToAdd.push(matchedVisit.id);
+        idsToAdd.push(matchedVisit.id.replace(/[^a-zA-Z0-9]/g, ''));
       }
-      if (visitOrId.visitNumber) {
-        idsToAdd.push(visitOrId.visitNumber);
-        idsToAdd.push(visitOrId.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
+      if (matchedVisit.visitNumber) {
+        idsToAdd.push(matchedVisit.visitNumber);
+        idsToAdd.push(matchedVisit.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
       }
-      if (visitOrId.name && (visitOrId.visitedAt || visitOrId.createdAt)) {
-        idsToAdd.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
+      if (matchedVisit.name) {
+        const cleanName = matchedVisit.name.trim().toLowerCase();
+        idsToAdd.push(`name_${cleanName}`);
+        if (matchedVisit.visitNumber) {
+          idsToAdd.push(`${cleanName}_${matchedVisit.visitNumber}`);
+        }
+        if (matchedVisit.whatsapp) {
+          idsToAdd.push(`${cleanName}_${matchedVisit.whatsapp}`);
+        }
+        if (matchedVisit.visitedAt || matchedVisit.createdAt) {
+          idsToAdd.push(`${matchedVisit.name}_${matchedVisit.visitedAt || matchedVisit.createdAt}`);
+        }
       }
     }
 
-    idsToAdd.filter(Boolean).forEach((id) => {
+    const validIds = idsToAdd.filter(Boolean);
+    validIds.forEach((id) => {
       sessionHandledIds.add(id);
       addPermanentReadId(id);
     });
 
     const store = getHandledPopupStore();
-    const newItems = idsToAdd.filter((id) => id && !store.handledIds.includes(id));
+    const newItems = validIds.filter((id) => !store.handledIds.includes(id));
     if (newItems.length > 0) {
       const updated = [...store.handledIds, ...newItems].slice(-1000);
       localStorage.setItem(HANDLED_POPUPS_KEY, JSON.stringify({ handledIds: updated, updatedAt: Date.now() }));
@@ -301,17 +331,32 @@ export const addVisitToDailyNotifications = (visit: Visit): { visits: Visit[]; r
 // Mark a specific notification as opened/read
 export const markDailyNotificationAsRead = (visitOrId: Visit | string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   markPopupAsHandled(visitOrId);
+  const current = getDailyNotificationStore();
   const idsToAdd: string[] = [];
+
+  let matchedVisit: Visit | undefined;
   if (typeof visitOrId === 'string') {
     idsToAdd.push(visitOrId);
-  } else {
-    if (visitOrId.id) idsToAdd.push(visitOrId.id);
-    if (visitOrId.visitNumber) idsToAdd.push(visitOrId.visitNumber);
+    matchedVisit = current.visits.find((v) => v.id === visitOrId || v.visitNumber === visitOrId);
+  } else if (visitOrId) {
+    matchedVisit = visitOrId;
   }
-  idsToAdd.forEach((id) => addPermanentReadId(id));
 
-  const current = getDailyNotificationStore();
-  const updatedReadIds = Array.from(new Set([...current.readVisitIds, ...idsToAdd]));
+  if (matchedVisit) {
+    if (matchedVisit.id) idsToAdd.push(matchedVisit.id);
+    if (matchedVisit.visitNumber) idsToAdd.push(matchedVisit.visitNumber);
+    if (matchedVisit.name) {
+      const cleanName = matchedVisit.name.trim().toLowerCase();
+      idsToAdd.push(`name_${cleanName}`);
+      if (matchedVisit.visitNumber) idsToAdd.push(`${cleanName}_${matchedVisit.visitNumber}`);
+      if (matchedVisit.whatsapp) idsToAdd.push(`${cleanName}_${matchedVisit.whatsapp}`);
+    }
+  }
+
+  const validIds = idsToAdd.filter(Boolean);
+  validIds.forEach((id) => addPermanentReadId(id));
+
+  const updatedReadIds = Array.from(new Set([...current.readVisitIds, ...validIds]));
   const newStore: DailyNotificationStore = {
     ...current,
     readVisitIds: updatedReadIds,
@@ -328,7 +373,12 @@ export const markDailyNotificationAsRead = (visitOrId: Visit | string): { visits
 export const markAllDailyNotificationsAsRead = (): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   const current = getDailyNotificationStore();
   current.visits.forEach((v) => markPopupAsHandled(v));
-  const allIds = current.visits.flatMap((v) => [v.id, v.visitNumber].filter(Boolean));
+  const allIds = current.visits.flatMap((v) => [
+    v.id,
+    v.visitNumber,
+    v.name ? `name_${v.name.trim().toLowerCase()}` : null,
+    v.name && v.visitNumber ? `${v.name.trim().toLowerCase()}_${v.visitNumber}` : null
+  ].filter(Boolean) as string[]);
   allIds.forEach((id) => addPermanentReadId(id));
   const newReadIds = Array.from(new Set([...current.readVisitIds, ...allIds]));
   const newStore: DailyNotificationStore = {
@@ -525,12 +575,21 @@ function markVisitAsNotified(visit: Visit): boolean {
     return false;
   }
 
-  // 2. In-memory debounce: if ANY of its IDs was notified in the last 10 minutes, ignore duplicate channel pushes
+  // 2. In-memory debounce: if ANY of its IDs was notified in the last 15 minutes, ignore duplicate channel pushes
   const now = Date.now();
-  const keys = [visit.id, visit.visitNumber].filter(Boolean) as string[];
+  const keys: string[] = [];
+  if (visit.id) keys.push(visit.id);
+  if (visit.visitNumber) keys.push(visit.visitNumber);
+  if (visit.name) {
+    const cleanName = visit.name.trim().toLowerCase();
+    keys.push(`name_${cleanName}`);
+    if (visit.visitNumber) keys.push(`${cleanName}_${visit.visitNumber}`);
+    if (visit.whatsapp) keys.push(`${cleanName}_${visit.whatsapp}`);
+  }
+
   for (const k of keys) {
     const lastTime = recentlyNotifiedVisits.get(k);
-    if (lastTime && now - lastTime < 600000) {
+    if (lastTime && now - lastTime < 900000) {
       return false;
     }
   }
@@ -658,6 +717,8 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     addVisitToDailyNotifications(visit);
     // 3. Debounce popup and sound trigger across multiple concurrent channels
     if (markVisitAsNotified(visit)) {
+      // Mark popup as handled so repeated parallel pushes will not re-trigger popup
+      markPopupAsHandled(visit);
       onNewVisit(visit);
       showDesktopNotification(visit);
     }
@@ -733,18 +794,20 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
       if (res.ok) {
         const result = await res.json();
         if (result.success && Array.isArray(result.data)) {
+          let maxTimestamp = lastServerPollTime;
           result.data.forEach((item: any) => {
+            const itemTime = typeof item.timestamp === 'number' ? item.timestamp : new Date(item.createdAt || 0).getTime();
             if (item?.visit) {
-              const itemTime = item.timestamp || new Date(item.createdAt || 0).getTime();
               // Only trigger if within the last 30 seconds
               if (itemTime >= Date.now() - 30000) {
                 handleIncomingVisit(item.visit);
               }
             }
-            if (item?.timestamp && item.timestamp > lastServerPollTime) {
-              lastServerPollTime = item.timestamp;
+            if (itemTime > maxTimestamp) {
+              maxTimestamp = itemTime;
             }
           });
+          lastServerPollTime = Math.max(lastServerPollTime, maxTimestamp, Date.now() - 10000);
         }
       }
     } catch {}

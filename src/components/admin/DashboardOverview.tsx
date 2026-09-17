@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Visit } from '../../types/posbakum';
+import { getWitaDateParts, getVisitDateYMD, isVisitToday } from '../../utils/dateUtils';
 import { 
   Users, 
   Calendar, 
@@ -39,37 +40,24 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 }) => {
   const [showResetModal, setShowResetModal] = useState(false);
 
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
-  const currentDay = String(now.getDate()).padStart(2, '0');
-  const todayYMD = `${currentYear}-${currentMonth}-${currentDay}`;
+  const witaNow = getWitaDateParts();
+  const currentYear = witaNow.year;
+  const currentMonth = witaNow.month;
+  const todayYMD = witaNow.dateKey;
   const thisMonthYM = `${currentYear}-${currentMonth}`;
 
   // 100% Dynamic KPI Calculations from Real Visits
   const stats = useMemo(() => {
-    const checkDateMatch = (v: Visit, prefix: string) => {
-      if (!v) return false;
-      const raw = v.visitedAt || v.createdAt || '';
-      if (!raw) return false;
-      if (raw.startsWith(prefix)) return true;
-      try {
-        const d = new Date(raw);
-        if (!isNaN(d.getTime())) {
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          const localYMD = `${y}-${m}-${day}`;
-          if (localYMD.startsWith(prefix)) return true;
-        }
-      } catch {}
-      return false;
-    };
-
     const total = visits.length;
-    const todayCount = visits.filter((v) => checkDateMatch(v, todayYMD)).length;
-    const monthCount = visits.filter((v) => checkDateMatch(v, thisMonthYM)).length;
-    const yearCount = visits.filter((v) => checkDateMatch(v, String(currentYear))).length;
+    const todayCount = visits.filter((v) => isVisitToday(v, todayYMD)).length;
+    const monthCount = visits.filter((v) => {
+      const ymd = getVisitDateYMD(v);
+      return ymd ? ymd.startsWith(thisMonthYM) : (v.visitedAt || v.createdAt || '').startsWith(thisMonthYM);
+    }).length;
+    const yearCount = visits.filter((v) => {
+      const ymd = getVisitDateYMD(v);
+      return ymd ? ymd.startsWith(String(currentYear)) : (v.visitedAt || v.createdAt || '').startsWith(String(currentYear));
+    }).length;
 
     // Case types breakdown
     const caseMap: Record<string, number> = {};
@@ -116,12 +104,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       const offset = d.dayIndex === 0 ? 6 : d.dayIndex - 1;
       targetDate.setDate(monday.getDate() + offset);
       
-      const y = targetDate.getFullYear();
-      const m = String(targetDate.getMonth() + 1).padStart(2, '0');
-      const dt = String(targetDate.getDate()).padStart(2, '0');
-      const dateKey = `${y}-${m}-${dt}`;
+      const targetParts = getWitaDateParts(targetDate);
+      const dateKey = targetParts.dateKey;
 
-      const count = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(dateKey)).length;
+      const count = visits.filter((v) => {
+        const vDate = getVisitDateYMD(v);
+        return vDate === dateKey || (v.visitedAt && v.visitedAt.startsWith(dateKey));
+      }).length;
       const isToday = dateKey === todayYMD;
 
       return {

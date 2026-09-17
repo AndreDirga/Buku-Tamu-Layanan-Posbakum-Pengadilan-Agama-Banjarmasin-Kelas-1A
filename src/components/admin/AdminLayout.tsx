@@ -232,6 +232,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       const res = markDailyNotificationAsRead(currentPopupVisit);
       setReadVisitIds(res.readVisitIds);
       setUnreadCount(res.unreadCount);
+      // Prune any duplicate queue items for this guest
+      setNotificationQueue((prev) =>
+        prev.filter(
+          (v) =>
+            v.id !== currentPopupVisit.id &&
+            (!currentPopupVisit.visitNumber || v.visitNumber !== currentPopupVisit.visitNumber) &&
+            (!currentPopupVisit.name || v.name !== currentPopupVisit.name)
+        )
+      );
     }
     setCurrentPopupVisit(null);
   }, [currentPopupVisit]);
@@ -271,10 +280,32 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
   // Open and mark single notification as read
   const handleOpenVisitDetailFromNotification = (visit: Visit) => {
-    const res = markDailyNotificationAsRead(visit.id);
+    markPopupAsHandled(visit);
+    const res = markDailyNotificationAsRead(visit);
     setReadVisitIds(res.readVisitIds);
     setUnreadCount(res.unreadCount);
     setShowNotificationsDropdown(false);
+
+    // Dismiss popup immediately if it belongs to this guest
+    if (
+      currentPopupVisit &&
+      (currentPopupVisit.id === visit.id ||
+        (visit.visitNumber && currentPopupVisit.visitNumber === visit.visitNumber) ||
+        (visit.name && currentPopupVisit.name === visit.name))
+    ) {
+      setCurrentPopupVisit(null);
+    }
+
+    // Prune queue for this guest
+    setNotificationQueue((prev) =>
+      prev.filter(
+        (v) =>
+          v.id !== visit.id &&
+          (!visit.visitNumber || v.visitNumber !== visit.visitNumber) &&
+          (!visit.name || v.name !== visit.name)
+      )
+    );
+
     if (onViewDetailVisit) {
       onViewDetailVisit(visit);
     }
@@ -285,6 +316,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     const res = markAllDailyNotificationsAsRead();
     setReadVisitIds(res.readVisitIds);
     setUnreadCount(0);
+    setCurrentPopupVisit(null);
+    setNotificationQueue([]);
   };
 
   // Manually delete single notification from history

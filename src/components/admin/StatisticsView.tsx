@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
+import { getVisitDateYMD } from '../../utils/dateUtils';
 import { 
   BarChart3, 
   PieChart as PieIcon, 
@@ -56,11 +57,17 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
 
   // Filtered visits for selected period
   const monthVisits = useMemo(() => {
-    return visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(monthYearKey));
+    return visits.filter((v) => {
+      const ymd = getVisitDateYMD(v);
+      return ymd ? ymd.startsWith(monthYearKey) : (v.visitedAt || '').startsWith(monthYearKey);
+    });
   }, [visits, monthYearKey]);
 
   const yearVisits = useMemo(() => {
-    return visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(selectedYear));
+    return visits.filter((v) => {
+      const ymd = getVisitDateYMD(v);
+      return ymd ? ymd.startsWith(selectedYear) : (v.visitedAt || '').startsWith(selectedYear);
+    });
   }, [visits, selectedYear]);
 
   // 1. Dynamic Daily Stats for Selected Month (Grouped by 5-day intervals)
@@ -76,8 +83,8 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
 
     return intervals.map((inv) => {
       const count = monthVisits.filter((v) => {
-        const dateObj = new Date(v.visitedAt);
-        const day = dateObj.getDate();
+        const ymd = getVisitDateYMD(v);
+        const day = ymd ? parseInt(ymd.split('-')[2], 10) : new Date(v.visitedAt || 0).getDate();
         return day >= inv.min && day <= inv.max;
       }).length;
 
@@ -97,9 +104,10 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
       { label: 'Minggu 4+ (Tgl 22-Akhir)', min: 22, max: 31 },
     ];
 
-    return weeks.map((w, idx) => {
+    return weeks.map((w) => {
       const count = monthVisits.filter((v) => {
-        const day = new Date(v.visitedAt).getDate();
+        const ymd = getVisitDateYMD(v);
+        const day = ymd ? parseInt(ymd.split('-')[2], 10) : new Date(v.visitedAt || 0).getDate();
         return day >= w.min && day <= w.max;
       }).length;
 

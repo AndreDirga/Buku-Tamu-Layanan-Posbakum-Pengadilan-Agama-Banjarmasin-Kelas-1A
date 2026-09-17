@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
+import { getWitaDateParts, getVisitDateYMD } from '../../utils/dateUtils';
 import { logActivity } from '../../services/storageService';
 import { GoogleSheetsSync } from './GoogleSheetsSync';
 import { 
@@ -30,11 +31,10 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
 
   // Helper date presets
   const handleSetPreset = (type: 'all' | 'today' | 'this_month' | 'this_year') => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    const todayStr = `${y}-${m}-${d}`;
+    const wita = getWitaDateParts();
+    const y = wita.year;
+    const m = wita.month;
+    const todayStr = wita.dateKey;
 
     if (type === 'all') {
       setStartDate('');
@@ -44,7 +44,7 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       setEndDate(todayStr);
     } else if (type === 'this_month') {
       const firstDay = `${y}-${m}-01`;
-      const lastDayNum = new Date(y, now.getMonth() + 1, 0).getDate();
+      const lastDayNum = new Date(y, parseInt(m, 10), 0).getDate();
       const lastDay = `${y}-${m}-${String(lastDayNum).padStart(2, '0')}`;
       setStartDate(firstDay);
       setEndDate(lastDay);
@@ -70,14 +70,9 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
       if (selectedCaseType !== 'ALL' && v.caseType !== selectedCaseType) {
         return false;
       }
-      if (startDate) {
-        const visitDate = v.visitedAt.substring(0, 10);
-        if (visitDate < startDate) return false;
-      }
-      if (endDate) {
-        const visitDate = v.visitedAt.substring(0, 10);
-        if (visitDate > endDate) return false;
-      }
+      const visitDate = getVisitDateYMD(v) || (v.visitedAt || '').substring(0, 10);
+      if (startDate && visitDate < startDate) return false;
+      if (endDate && visitDate > endDate) return false;
       return true;
     });
   }, [visits, startDate, endDate, selectedCaseType]);

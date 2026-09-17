@@ -2,6 +2,7 @@ import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../ty
 import { db } from './firebase';
 import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications } from './notificationService';
 import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
+import { getWitaDateParts } from '../utils/dateUtils';
 import { 
   collection, 
   doc, 
@@ -336,23 +337,59 @@ export const getStoredVisits = (): Visit[] => {
 };
 
 // Merge cloud, server, and local visits cleanly without loss or duplicate
-export const mergeVisits = (cloudList: Visit[], localList: Visit[]): Visit[] => {
+export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit[] => {
   const map = new Map<string, Visit>();
 
-  // 1. Add local visits
-  localList.forEach((v) => {
-    if (v.id) map.set(v.id, v);
+  // 1. Add secondary visits first
+  secondaryList.forEach((v) => {
+    if (v && v.id) map.set(v.id, v);
   });
 
-  // 2. Overwrite with Cloud/Server data, always picking the best intact image (never overwritten by broken/truncated strings)
-  cloudList.forEach((v) => {
-    const existing = map.get(v.id);
-    if (existing) {
+  // 2. Primary visits take priority (authoritative queue numbers and server timestamps)
+  primaryList.forEach((v) => {
+    if (!v || !v.id) return;
+
+    // Check if matching by exact id
+    let existingKey = map.has(v.id) ? v.id : null;
+
+    // If not matched by id, check if matched by visitNumber
+    if (!existingKey && v.visitNumber) {
+      for (const [k, sec] of map.entries()) {
+        if (sec.visitNumber === v.visitNumber) {
+          existingKey = k;
+          break;
+        }
+      }
+    }
+
+    // If not matched, check if matched by name + whatsapp + date
+    if (!existingKey && v.name && v.whatsapp) {
+      const vDate = (v.visitedAt || v.createdAt || '').substring(0, 10);
+      for (const [k, sec] of map.entries()) {
+        const secDate = (sec.visitedAt || sec.createdAt || '').substring(0, 10);
+        if (
+          sec.name &&
+          sec.name.trim().toLowerCase() === v.name.trim().toLowerCase() &&
+          sec.whatsapp === v.whatsapp &&
+          vDate === secDate
+        ) {
+          existingKey = k;
+          break;
+        }
+      }
+    }
+
+    if (existingKey) {
+      const existing = map.get(existingKey)!;
+      if (existingKey !== v.id) {
+        map.delete(existingKey);
+      }
       map.set(v.id, {
         ...existing,
         ...v,
-        selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl, () => generateFallbackSelfie(v.name, v.visitNumber)),
-        signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl, () => generateFallbackSignature(v.name, v.visitNumber)),
+        visitNumber: v.visitNumber || existing.visitNumber,
+        selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl, () => generateFallbackSelfie(v.name, v.visitNumber || existing.visitNumber)),
+        signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl, () => generateFallbackSignature(v.name, v.visitNumber || existing.visitNumber)),
       });
     } else {
       map.set(v.id, v);
@@ -461,7 +498,7 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   // Helper to handle and dispatch new visits array with dedup and sorting
   const handleFreshVisits = (fresh: Visit[]) => {
     if (!isSubscribed) return;
-    const merged = mergeVisits(currentVisits, fresh);
+    const merged = mergeVisits(fresh, currentVisits);
     merged.sort((a, b) => {
       const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
       const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
@@ -469,8 +506,8 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     });
 
     // Check if data actually changed
-    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.notes || ''}`).join('|');
-    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.notes || ''}`).join('|');
+    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
+    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
 
     if (newKeys !== oldKeys || currentVisits.length !== merged.length) {
       currentVisits = merged;
@@ -575,27 +612,10 @@ export const saveVisit = async (
   newVisitData: Omit<Visit, 'id' | 'visitNumber' | 'createdAt' | 'status'> & { status?: Visit['status'] }
 ): Promise<Visit> => {
   const now = new Date();
-
-  // Format date YYYYMMDD
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const dateStr = `${year}${month}${day}`;
-  const todayPrefix = `KJG-${dateStr}-`;
-
-  // Formatted date & time in Indonesian
-  const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-  const monthNames = [
-    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-  ];
-  const dayName = dayNames[now.getDay()];
-  const monthName = monthNames[now.getMonth()];
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-
-  const dateDisplay = `${dayName}, ${now.getDate()} ${monthName} ${year}`;
-  const timeDisplay = `${hours}:${minutes} WITA`;
+  const witaParts = getWitaDateParts(now);
+  const todayPrefix = `KJG-${witaParts.dateStr}-`;
+  const dateDisplay = `${witaParts.dayName}, ${parseInt(witaParts.day, 10)} ${witaParts.monthName} ${witaParts.year}`;
+  const timeDisplay = `${witaParts.hours}:${witaParts.minutes} WITA`;
 
   const visitId = `vst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
@@ -604,7 +624,6 @@ export const saveVisit = async (
   if (processedSelfieUrl && !isTruncatedOrBrokenImageDataUrl(processedSelfieUrl)) {
     try {
       const currentSizeKb = getDataUrlSizeKb(processedSelfieUrl);
-      // If photo is larger than 155 KB or not JPEG format, automatically convert and compress to <= 150 KB
       if (currentSizeKb > 155 || !processedSelfieUrl.startsWith('data:image/jpeg')) {
         const compressed = await compressImageToTargetKb(processedSelfieUrl, 150);
         processedSelfieUrl = compressed.dataUrl;
@@ -645,11 +664,20 @@ export const saveVisit = async (
     console.warn('Server API write warning, using local fallback sequence:', err);
   }
 
-  // If server was offline or unreachable, assign local sequence fallback
+  // If server was offline or unreachable, assign local sequence fallback using maxSeq
   if (!visitRecord.visitNumber) {
     const localVisits = getStoredVisits();
-    const countToday = localVisits.filter((v) => v.visitNumber && v.visitNumber.startsWith(todayPrefix)).length;
-    visitRecord.visitNumber = `${todayPrefix}${String(countToday + 1).padStart(4, '0')}`;
+    let maxSeq = 0;
+    localVisits.forEach((v) => {
+      if (v.visitNumber && v.visitNumber.startsWith(todayPrefix)) {
+        const parts = v.visitNumber.split('-');
+        const lastPart = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(lastPart) && lastPart > maxSeq) {
+          maxSeq = lastPart;
+        }
+      }
+    });
+    visitRecord.visitNumber = `${todayPrefix}${String(maxSeq + 1).padStart(4, '0')}`;
   }
 
   // 2. Update local cache immediately for zero latency
