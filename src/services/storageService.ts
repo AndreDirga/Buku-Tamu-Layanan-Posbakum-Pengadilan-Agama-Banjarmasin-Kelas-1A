@@ -3,6 +3,7 @@ import { db } from './firebase';
 import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications } from './notificationService';
 import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
 import { getWitaDateParts } from '../utils/dateUtils';
+import seedVisitsLite from '../data/seedVisitsLite.json';
 import { 
   collection, 
   doc, 
@@ -243,20 +244,96 @@ export const normalizeVisitData = (data: any, docId: string): Visit => {
   };
 };
 
-// Safe localStorage persistence: NEVER truncates image strings!
-// If quota is reached, stores only recent 25 visits in local cache, leaving images 100% uncorrupted
+// Native IndexedDB for robust, unlimited client-side persistence of 100% visits & photos
+const IDB_NAME = 'posbakum_local_db';
+const IDB_VERSION = 1;
+const IDB_STORE = 'visits';
+
+function openVisitsDB(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      return resolve(null);
+    }
+    try {
+      const request = indexedDB.open(IDB_NAME, IDB_VERSION);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(IDB_STORE)) {
+          database.createObjectStore(IDB_STORE, { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+export async function saveVisitsToIndexedDB(visits: Visit[]): Promise<void> {
+  if (!visits || !Array.isArray(visits) || visits.length === 0) return;
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    const tx = database.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    for (const v of visits) {
+      if (v && v.id) {
+        store.put(v);
+      }
+    }
+  } catch (err) {
+    console.warn('IndexedDB save warning:', err);
+  }
+}
+
+export async function getVisitsFromIndexedDB(): Promise<Visit[]> {
+  try {
+    const database = await openVisitsDB();
+    if (!database) return [];
+    return new Promise((resolve) => {
+      const tx = database.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const results = request.result || [];
+        resolve(results.map((item: any) => normalizeVisitData(item, item.id)));
+      };
+      request.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+// Safe localStorage persistence: NEVER drops or truncates visits!
+// If browser quota limit is reached due to heavy photos, it preserves ALL visits with lightweight SVG fallbacks
 export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
+  if (!visits || !Array.isArray(visits)) return;
+
+  // 1. Asynchronously save all visits with full 100% resolution photos into IndexedDB (virtually unlimited quota)
+  saveVisitsToIndexedDB(visits).catch(() => {});
+
+  // 2. Save into localStorage
   try {
     localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
   } catch (err) {
-    console.warn('LocalStorage quota limit reached, saving recent uncorrupted visits:', err);
+    console.warn('LocalStorage quota limit reached, saving all visits in compact mode without dropping any record:', err);
     try {
-      // Keep only most recent 25 visits in local storage to prevent quota overflow
-      // Crucial: Images are NEVER truncated or sliced with substring()!
-      const recentVisits = visits.slice(0, 25);
-      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(recentVisits));
+      // NEVER slice or drop visits! Keep 100% of all visits by replacing heavy base64 strings with lightweight SVGs
+      const compactVisits = visits.map((v) => {
+        const copy = { ...v };
+        if (copy.selfieUrl && copy.selfieUrl.length > 500 && !copy.selfieUrl.startsWith('data:image/svg')) {
+          copy.selfieUrl = generateFallbackSelfie(copy.name, copy.visitNumber);
+        }
+        if (copy.signatureUrl && copy.signatureUrl.length > 500 && !copy.signatureUrl.startsWith('data:image/svg')) {
+          copy.signatureUrl = generateFallbackSignature(copy.name, copy.visitNumber);
+        }
+        return copy;
+      });
+      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(compactVisits));
     } catch (err2) {
-      console.error('LocalStorage write failed even with recent 25 visits:', err2);
+      console.error('LocalStorage write failed in compact mode:', err2);
     }
   }
 };
@@ -316,24 +393,26 @@ export const syncLocalVisitsToServer = async (visits: Visit[]): Promise<void> =>
   }
 };
 
-// Helper to get local cache
+// Helper to get local cache with automatic baseline recovery for other computers
 export const getStoredVisits = (): Visit[] => {
   const localList = getAllLocalVisits();
-  if (localList.length > 0) {
-    return localList;
+  const seedList: Visit[] = (seedVisitsLite as any[]).map((item) => normalizeVisitData(item, item.id));
+
+  if (localList.length === 0) {
+    // Fresh browser / new computer: seed immediately with authoritative baseline (125 visits)
+    safeSaveVisitsToStorage(seedList);
+    return seedList;
   }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_VISITS);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.map((item) => normalizeVisitData(item, item.id || 'cache-id'));
-    }
-    return [];
-  } catch (err) {
-    console.error('Failed to load visits from localStorage', err);
-    return [];
+
+  // If local storage has fewer visits than seed (e.g. from previous 25-slice bug on that computer):
+  // Automatically heal and recover all 125 visits without losing local edits!
+  if (localList.length < seedList.length) {
+    const recovered = mergeVisits(localList, seedList);
+    safeSaveVisitsToStorage(recovered);
+    return recovered;
   }
+
+  return localList;
 };
 
 // Merge cloud, server, and local visits cleanly without loss or duplicate
@@ -411,8 +490,9 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
 export const fetchVisits = async (): Promise<Visit[]> => {
   let serverVisits: Visit[] = [];
   let firestoreVisits: Visit[] = [];
+  let idbVisits: Visit[] = [];
 
-  // 1. Primary Source A: Server Database API
+  // 1. Primary Source A: Server Database API (Fast & Authoritative)
   const serverPromise = (async () => {
     try {
       const res = await fetch('/api/visits', { cache: 'no-store' });
@@ -428,12 +508,15 @@ export const fetchVisits = async (): Promise<Visit[]> => {
     return [];
   })();
 
-  // 2. Primary Source B: Cloud Firestore (Cross-computer internet sync)
+  // 2. Source B: IndexedDB (Local full-resolution offline storage)
+  const idbPromise = getVisitsFromIndexedDB().catch(() => []);
+
+  // 3. Source C: Cloud Firestore with 2-second timeout safeguard (prevents quota hang)
   const firestorePromise = (async () => {
     try {
       const snap = await Promise.race([
         getDocs(collection(db, 'visits')),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 6000))
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2000))
       ]);
       if (snap && 'forEach' in snap) {
         const list: Visit[] = [];
@@ -443,19 +526,24 @@ export const fetchVisits = async (): Promise<Visit[]> => {
         return list;
       }
     } catch (err) {
-      console.warn('Firestore fetch warning:', err);
+      // Expected when quota is exhausted
     }
     return [];
   })();
 
-  const [resServer, resFirestore] = await Promise.all([serverPromise, firestorePromise]);
+  const [resServer, resIdb, resFirestore] = await Promise.all([serverPromise, idbPromise, firestorePromise]);
   serverVisits = resServer;
+  idbVisits = resIdb;
   firestoreVisits = resFirestore;
 
-  // 3. Merge Server + Cloud Firestore + Local Cache
+  // 4. Merge Server + Cloud Firestore + IndexedDB + Local Cache + Seed
   const localVisits = getAllLocalVisits();
-  const mergedCloud = mergeVisits(serverVisits, firestoreVisits);
-  const fullyMerged = mergeVisits(mergedCloud, localVisits);
+  const seedList: Visit[] = (seedVisitsLite as any[]).map((item) => normalizeVisitData(item, item.id));
+
+  let fullyMerged = mergeVisits(serverVisits, firestoreVisits);
+  fullyMerged = mergeVisits(fullyMerged, idbVisits);
+  fullyMerged = mergeVisits(fullyMerged, localVisits);
+  fullyMerged = mergeVisits(fullyMerged, seedList);
 
   // Strict descending order: most recent always at index 0
   fullyMerged.sort((a, b) => {
@@ -479,7 +567,7 @@ export const fetchVisits = async (): Promise<Visit[]> => {
       return restoredSelfie || restoredSig;
     });
 
-    if (needsServerSync.length > 0) {
+    if (needsServerSync.length > 0 && serverVisits.length > 0) {
       console.log(`[Posbakum] Syncing ${needsServerSync.length} restored or new visits to server...`);
       syncLocalVisitsToServer(needsServerSync).catch(() => {});
     }
@@ -494,6 +582,8 @@ export const fetchVisits = async (): Promise<Visit[]> => {
 export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => void) => {
   let isSubscribed = true;
   let currentVisits: Visit[] = getStoredVisits();
+  let lastKnownServerVersion = 0;
+  let isFetchingFull = false;
 
   // Helper to handle and dispatch new visits array with dedup and sorting
   const handleFreshVisits = (fresh: Visit[]) => {
@@ -516,7 +606,15 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     }
   };
 
-  // 1. REAL-TIME CLOUD FIRESTORE LISTENER (Pushes updates to other computers across internet instantly)
+  // 1. Initial hydration from IndexedDB for high-res images
+  getVisitsFromIndexedDB().then((idbVisits) => {
+    if (!isSubscribed) return;
+    if (idbVisits && idbVisits.length >= currentVisits.length) {
+      handleFreshVisits(idbVisits);
+    }
+  }).catch(() => {});
+
+  // 2. REAL-TIME CLOUD FIRESTORE LISTENER (Pushes updates across internet instantly when quota permits)
   let unsubFirestore = () => {};
   try {
     unsubFirestore = onSnapshot(
@@ -532,17 +630,32 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
         }
       },
       (error) => {
-        console.warn('Firestore onSnapshot warning:', error);
+        // Expected when quota is exhausted
       }
     );
   } catch (err) {
     console.warn('Failed to attach Firestore onSnapshot:', err);
   }
 
-  // 2. Server polling backup every 2.5 seconds
+  // 3. Ultra-fast, low-bandwidth Server Polling (checks lightweight summary every 2.5s)
   const syncFromServer = async () => {
-    if (!isSubscribed) return;
+    if (!isSubscribed || isFetchingFull) return;
     try {
+      // Check summary first (only ~50 bytes)
+      const sumRes = await fetch('/api/visits/summary', { cache: 'no-store' });
+      if (sumRes.ok) {
+        const sumJson = await sumRes.json();
+        if (sumJson.success) {
+          // If server count and version match what we already have, skip downloading 10MB payload!
+          if (sumJson.count === currentVisits.length && sumJson.version <= lastKnownServerVersion) {
+            return;
+          }
+          lastKnownServerVersion = sumJson.version;
+        }
+      }
+
+      // If count or version changed, or initial sync: fetch full visits
+      isFetchingFull = true;
       const res = await fetch('/api/visits', { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
@@ -551,13 +664,15 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
           handleFreshVisits(fresh);
         }
       }
-    } catch {}
+    } catch {} finally {
+      isFetchingFull = false;
+    }
   };
 
   syncFromServer();
   const intervalId = setInterval(syncFromServer, 2500);
 
-  // 3. Local tab StorageEvent listener
+  // 4. Local tab StorageEvent listener
   const handleStorageChange = (e: StorageEvent) => {
     if (!isSubscribed) return;
     if (e.key === STORAGE_KEY_VISITS) {
@@ -580,7 +695,7 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   window.addEventListener('storage', handleStorageChange);
   window.addEventListener('focus', handleFocus);
 
-  // 4. BroadcastChannel listener for cross-tab sync
+  // 5. BroadcastChannel listener for cross-tab sync
   let broadcastChannel: BroadcastChannel | null = null;
   try {
     if (typeof BroadcastChannel !== 'undefined') {

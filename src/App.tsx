@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Visit, OfficerUser } from './types/posbakum';
 import { 
   getStoredVisits, 
+  getVisitsFromIndexedDB,
   fetchVisits,
   subscribeToVisits,
   getAuthenticatedOfficer, 
@@ -56,11 +57,20 @@ export default function App() {
 
   // Initial load & Firestore real-time sync with robust fallback & direct fetch
   useEffect(() => {
-    // 1. Initial cached visits for zero-delay UI rendering
+    // 1. Initial cached visits for zero-delay UI rendering (guaranteed >= 125 visits)
     const loadedVisits = getStoredVisits();
     setVisits(loadedVisits);
 
-    // 2. Direct fetch from Cloud Firestore to guarantee no records are missed
+    // 2. Hydrate full-resolution offline images from IndexedDB if present
+    getVisitsFromIndexedDB()
+      .then((idbVisits) => {
+        if (idbVisits && idbVisits.length >= loadedVisits.length) {
+          setVisits(idbVisits);
+        }
+      })
+      .catch(() => {});
+
+    // 3. Direct fetch from Server Database API / Cloud Firestore to guarantee no records are missed
     fetchVisits()
       .then((fresh) => {
         if (fresh && fresh.length > 0) {

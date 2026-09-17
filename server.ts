@@ -175,6 +175,8 @@ const DEFAULT_VISITS = [
   }
 ];
 
+let visitsVersionTimestamp = Date.now();
+
 // Helper to read visits from disk
 function readVisitsFromDisk(): any[] {
   try {
@@ -183,6 +185,17 @@ function readVisitsFromDisk(): any[] {
       const data = JSON.parse(raw);
       if (Array.isArray(data) && data.length > 0) {
         return data;
+      }
+    }
+    // Fallback: check seedVisits.json
+    const seedFile = path.join(process.cwd(), 'src', 'data', 'seedVisits.json');
+    if (fs.existsSync(seedFile)) {
+      const seedRaw = fs.readFileSync(seedFile, 'utf8');
+      const seedData = JSON.parse(seedRaw);
+      if (Array.isArray(seedData) && seedData.length > 0) {
+        saveVisitsToDisk(seedData);
+        console.log(`[Server] Restored ${seedData.length} authoritative visits from seed backup.`);
+        return seedData;
       }
     }
     // Initialize with default visits
@@ -198,6 +211,7 @@ function readVisitsFromDisk(): any[] {
 function saveVisitsToDisk(visits: any[]): void {
   try {
     fs.writeFileSync(VISITS_FILE, JSON.stringify(visits, null, 2), 'utf8');
+    visitsVersionTimestamp = Date.now();
   } catch (err) {
     console.error('Error writing visits file:', err);
   }
@@ -498,6 +512,21 @@ app.post('/api/notifications/broadcast', (req, res) => {
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+// GET lightweight summary of visits for high-speed, zero-bandwidth polling
+app.get('/api/visits/summary', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  if (!visitsCache || visitsCache.length === 0) {
+    visitsCache = readVisitsFromDisk();
+  }
+  res.json({
+    success: true,
+    count: visitsCache.length,
+    version: visitsVersionTimestamp,
+  });
 });
 
 // GET all visits (instant, 100% reliable, zero Firestore quota limits)
