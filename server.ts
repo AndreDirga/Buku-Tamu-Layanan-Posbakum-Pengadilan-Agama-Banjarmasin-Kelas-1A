@@ -627,7 +627,7 @@ app.get('/api/visits/:id', (req, res) => {
 });
 
 // GET all visits (instant, 100% reliable, zero Firestore quota limits)
-// Supports ?compact=true for blazing sub-20ms dashboard & table rendering
+// GET /api/visits - Always preserves 100% real guest selfie photos and signatures
 app.get('/api/visits', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -637,34 +637,7 @@ app.get('/api/visits', (req, res) => {
       visitsCache = readVisitsFromDisk();
     }
     
-    const isCompact = req.query.compact === 'true';
-    if (isCompact) {
-      const compactData = visitsCache.map((v) => {
-        let selfie = v.selfieUrl;
-        let signature = v.signatureUrl;
-        // Truncate heavy base64 for compact list view (loaded on demand in detail view)
-        if (selfie && selfie.length > 500 && !selfie.startsWith('data:image/svg')) {
-          selfie = '';
-        }
-        if (signature && signature.length > 500 && !signature.startsWith('data:image/svg')) {
-          signature = '';
-        }
-        return {
-          ...v,
-          selfieUrl: selfie,
-          signatureUrl: signature,
-          hasRealSelfie: isRealUserImage(v.selfieUrl),
-          hasRealSignature: isRealUserImage(v.signatureUrl),
-        };
-      });
-      return res.json({
-        success: true,
-        count: compactData.length,
-        compact: true,
-        data: compactData,
-      });
-    }
-
+    // Always return complete records with full-fidelity selfieUrl and signatureUrl
     res.json({
       success: true,
       count: visitsCache.length,

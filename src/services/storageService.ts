@@ -398,11 +398,9 @@ export const getStoredVisits = (): Visit[] => {
   const localList = getAllLocalVisits();
   const seedList: Visit[] = (seedVisitsLite as any[]).map((item) => normalizeVisitData(item, item.id));
 
-  // Merge local list with seed baseline (125 items) so any device/computer always has the complete 125 records
+  // Merge local list with seed baseline (125 items) so any device/computer always has the complete 125 records with real photos
   const fullyRecovered = mergeVisits(localList, seedList);
-  if (fullyRecovered.length > localList.length) {
-    safeSaveVisitsToStorage(fullyRecovered);
-  }
+  safeSaveVisitsToStorage(fullyRecovered);
 
   return fullyRecovered;
 };
@@ -525,7 +523,7 @@ export const fetchVisits = async (): Promise<Visit[]> => {
 
   // 1. Primary Source A: Server Database API (Sub-15ms ultra-fast disk storage)
   try {
-    const res = await fetch('/api/visits?compact=true', { cache: 'no-store' });
+    const res = await fetch('/api/visits', { cache: 'no-store' });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -728,9 +726,9 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
         }
       }
 
-      // If count or version changed, or initial sync: fetch compact visits (sub-20ms, ~50KB)
+      // If count or version changed, or initial sync: fetch complete visits with full-resolution photos
       isFetchingFull = true;
-      const res = await fetch('/api/visits?compact=true', { cache: 'no-store' });
+      const res = await fetch('/api/visits', { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
