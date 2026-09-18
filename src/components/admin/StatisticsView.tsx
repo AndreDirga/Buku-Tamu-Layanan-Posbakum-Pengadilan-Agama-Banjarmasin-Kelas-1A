@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
-import { getVisitDateYMD } from '../../utils/dateUtils';
+import { getVisitDateYMD, getOperationalPeriod } from '../../utils/dateUtils';
 import { 
   BarChart3, 
   PieChart as PieIcon, 
@@ -28,14 +28,29 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
   onDataReset,
   officerName = 'Admin' 
 }) => {
-  const nowObj = new Date();
-  const currentMonthStr = String(nowObj.getMonth() + 1).padStart(2, '0');
-  const currentYearStr = String(nowObj.getFullYear());
+  const opPeriod = useMemo(() => getOperationalPeriod(visits), [visits]);
+  const defaultMonthStr = opPeriod.month;
+  const defaultYearStr = opPeriod.yearStr;
 
   const [periodType, setPeriodType] = useState<'hari' | 'minggu' | 'bulan' | 'tahun'>('bulan');
-  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
-  const [selectedYear, setSelectedYear] = useState(currentYearStr);
+  const [selectedMonth, setSelectedMonth] = useState(defaultMonthStr);
+  const [selectedYear, setSelectedYear] = useState(defaultYearStr);
   const [showResetModal, setShowResetModal] = useState(false);
+
+  // Auto-sync if selected month/year has 0 visits but database has operational data
+  useEffect(() => {
+    if (visits && visits.length > 0) {
+      const activeKey = `${selectedYear}-${selectedMonth}`;
+      const hasVisits = visits.some((v) => {
+        const ymd = getVisitDateYMD(v);
+        return ymd ? ymd.startsWith(activeKey) : false;
+      });
+      if (!hasVisits && opPeriod.yearMonth) {
+        setSelectedMonth(opPeriod.month);
+        setSelectedYear(opPeriod.yearStr);
+      }
+    }
+  }, [visits, opPeriod.month, opPeriod.yearStr, selectedMonth, selectedYear]);
 
   // Month names in Indonesian
   const monthNames = [
@@ -126,7 +141,10 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
 
     return monthNames.map((m) => {
       const prefix = `${selectedYear}-${m.code}`;
-      const count = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(prefix)).length;
+      const count = visits.filter((v) => {
+        const ymd = getVisitDateYMD(v) || (v.visitedAt || v.createdAt || '').substring(0, 10);
+        return ymd.startsWith(prefix);
+      }).length;
       const isCurrent = String(currY) === selectedYear && currM === m.code;
 
       return {
@@ -143,7 +161,10 @@ export const StatisticsView: React.FC<StatisticsViewProps> = ({
   const yearlyStats = useMemo(() => {
     const years = ['2024', '2025', '2026', '2027'];
     return years.map((y) => {
-      const count = visits.filter((v) => v.visitedAt && v.visitedAt.startsWith(y)).length;
+      const count = visits.filter((v) => {
+        const ymd = getVisitDateYMD(v) || (v.visitedAt || v.createdAt || '').substring(0, 10);
+        return ymd.startsWith(y);
+      }).length;
       return {
         year: y,
         count,

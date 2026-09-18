@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Visit } from '../../types/posbakum';
-import { getWitaDateParts, getVisitDateYMD, isVisitToday } from '../../utils/dateUtils';
+import { getWitaDateParts, getVisitDateYMD, isVisitToday, getOperationalPeriod } from '../../utils/dateUtils';
 import { 
   Users, 
   Calendar, 
@@ -40,11 +40,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 }) => {
   const [showResetModal, setShowResetModal] = useState(false);
 
-  const witaNow = getWitaDateParts();
-  const currentYear = witaNow.year;
-  const currentMonth = witaNow.month;
-  const todayYMD = witaNow.dateKey;
-  const thisMonthYM = `${currentYear}-${currentMonth}`;
+  // Intelligently determine active operational month & year across any client computer
+  const opPeriod = useMemo(() => getOperationalPeriod(visits), [visits]);
+  const currentYear = opPeriod.year;
+  const currentMonth = opPeriod.month;
+  const todayYMD = opPeriod.todayKey;
+  const thisMonthYM = opPeriod.yearMonth;
+  const periodLabel = opPeriod.periodLabel;
 
   // 100% Dynamic KPI Calculations from Real Visits
   const stats = useMemo(() => {
@@ -80,7 +82,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     };
   }, [visits, todayYMD, thisMonthYM, currentYear]);
 
-  // Weekly Trend Bars calculated dynamically for current week (Senin - Minggu)
+  // Weekly Trend Bars calculated dynamically for active operational week
   const weeklyData = useMemo(() => {
     const daysConfig = [
       { name: 'Senin', short: 'Sen', dayIndex: 1 },
@@ -92,12 +94,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       { name: 'Minggu', short: 'Min', dayIndex: 0 },
     ];
 
-    // Find start of current week (Monday)
-    const curr = new Date();
-    const currentDayOfWeek = curr.getDay(); // 0 is Sun, 1 is Mon
+    // Anchor current week to todayYMD
+    const [tY, tM, tD] = todayYMD.split('-').map(Number);
+    const anchorDate = new Date(tY || 2026, (tM || 9) - 1, tD || 17, 12, 0, 0);
+    const currentDayOfWeek = anchorDate.getDay(); // 0 is Sun, 1 is Mon
     const distanceToMonday = currentDayOfWeek === 0 ? -6 : 1 - currentDayOfWeek;
-    const monday = new Date(curr);
-    monday.setDate(curr.getDate() + distanceToMonday);
+    const monday = new Date(anchorDate);
+    monday.setDate(anchorDate.getDate() + distanceToMonday);
 
     return daysConfig.map((d) => {
       const targetDate = new Date(monday);
@@ -242,7 +245,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             {stats.monthCount.toLocaleString('id-ID')}
           </div>
           <div className="text-[10px] font-semibold text-amber-700 flex items-center gap-1">
-            <span>Bulan Berjalan ({currentMonth}/{currentYear})</span>
+            <span>Bulan Berjalan ({periodLabel})</span>
           </div>
         </div>
 

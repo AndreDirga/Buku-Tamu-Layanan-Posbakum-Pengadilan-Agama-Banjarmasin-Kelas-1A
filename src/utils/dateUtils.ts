@@ -292,3 +292,89 @@ export const isVisitInYear = (v: Partial<Visit> | null | undefined, year: string
   const visitYMD = getVisitDateYMD(v);
   return visitYMD.startsWith(year);
 };
+
+/**
+ * Automatically determines the active operational month, year, and date key.
+ * If the device clock is in a different year/month where no records exist (e.g. testing in 2025/2024),
+ * but records exist in the database (e.g. September 2026, 1-17 Sept 2026),
+ * it seamlessly anchors to the active operational period so that stats and date filters
+ * on any computer accurately count all registered visits without discrepancy!
+ */
+export const getOperationalPeriod = (visits?: (Partial<Visit> | null | undefined)[]): {
+  year: number;
+  yearStr: string;
+  month: string; // 01-12
+  monthStr: string;
+  monthName: string;
+  yearMonth: string; // YYYY-MM
+  todayKey: string; // YYYY-MM-DD
+  periodLabel: string;
+} => {
+  const wita = getWitaDateParts();
+  let activeYear = wita.year;
+  let activeMonth = wita.month;
+  let activeYM = `${activeYear}-${activeMonth}`;
+  let todayKey = wita.dateKey;
+
+  // If visits are provided, check if current device month has any data
+  if (visits && visits.length > 0) {
+    const hasVisitsInCurrentYM = visits.some((v) => {
+      const ymd = getVisitDateYMD(v);
+      return ymd ? ymd.startsWith(activeYM) : false;
+    });
+
+    // If device month has 0 visits, find the most active operational month in the dataset
+    if (!hasVisitsInCurrentYM) {
+      const ymCounts = new Map<string, number>();
+      visits.forEach((v) => {
+        const ymd = getVisitDateYMD(v);
+        if (ymd && ymd.length >= 7) {
+          const ym = ymd.substring(0, 7);
+          ymCounts.set(ym, (ymCounts.get(ym) || 0) + 1);
+        }
+      });
+
+      let bestYM = '';
+      let maxCount = 0;
+      for (const [ym, count] of ymCounts.entries()) {
+        if (count > maxCount) {
+          maxCount = count;
+          bestYM = ym;
+        }
+      }
+
+      if (bestYM && bestYM.includes('-')) {
+        const [yStr, mStr] = bestYM.split('-');
+        activeYear = parseInt(yStr, 10) || activeYear;
+        activeMonth = mStr;
+        activeYM = bestYM;
+
+        // Anchor todayKey if current todayKey is outside the active month
+        if (!todayKey.startsWith(activeYM)) {
+          let latestDate = '';
+          visits.forEach((v) => {
+            const ymd = getVisitDateYMD(v);
+            if (ymd && ymd.startsWith(activeYM) && ymd > latestDate) {
+              latestDate = ymd;
+            }
+          });
+          if (latestDate) todayKey = latestDate;
+        }
+      }
+    }
+  }
+
+  const mIdx = Math.max(0, Math.min(11, parseInt(activeMonth, 10) - 1));
+  const monthName = INDO_MONTH_NAMES[mIdx];
+
+  return {
+    year: activeYear,
+    yearStr: String(activeYear),
+    month: activeMonth,
+    monthStr: activeMonth,
+    monthName,
+    yearMonth: activeYM,
+    todayKey,
+    periodLabel: `${monthName} ${activeYear}`,
+  };
+};

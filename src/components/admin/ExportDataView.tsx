@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
-import { getWitaDateParts, getVisitDateYMD } from '../../utils/dateUtils';
+import { getWitaDateParts, getVisitDateYMD, getOperationalPeriod } from '../../utils/dateUtils';
 import { logActivity } from '../../services/storageService';
 import { GoogleSheetsSync } from './GoogleSheetsSync';
 import { 
@@ -29,12 +29,12 @@ export const ExportDataView: React.FC<ExportDataViewProps> = ({ visits }) => {
   const [exportSuccess, setExportSuccess] = useState(false);
   const [activeExportTab, setActiveExportTab] = useState<'sheets' | 'csv'>('sheets');
 
-  // Helper date presets
+  // Helper date presets anchored to operational period of database
   const handleSetPreset = (type: 'all' | 'today' | 'this_month' | 'this_year') => {
-    const wita = getWitaDateParts();
-    const y = wita.year;
-    const m = wita.month;
-    const todayStr = wita.dateKey;
+    const op = getOperationalPeriod(visits);
+    const y = op.year;
+    const m = op.month;
+    const todayStr = op.todayKey;
 
     if (type === 'all') {
       setStartDate('');

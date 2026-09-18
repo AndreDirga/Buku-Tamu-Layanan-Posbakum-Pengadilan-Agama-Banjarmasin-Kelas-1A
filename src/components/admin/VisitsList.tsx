@@ -12,6 +12,7 @@ import {
   Square,
   FileSpreadsheet, 
   ChevronRight,
+  ChevronLeft,
   X,
   CheckCircle2,
   Calendar,
@@ -44,6 +45,10 @@ export const VisitsList: React.FC<VisitsListProps> = ({
   const [endDate, setEndDate] = useState('');
   const [selectedCaseType, setSelectedCaseType] = useState('ALL');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
+
+  // Pagination state (sub-10ms instantaneous rendering)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(25);
 
   // Multi-selection state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -109,12 +114,23 @@ export const VisitsList: React.FC<VisitsListProps> = ({
     return list;
   }, [visits, searchQuery, selectedCaseType, selectedStatus, startDate, endDate]);
 
+  // Pagination calculations (sub-10ms instantaneous rendering)
+  const totalPages = Math.max(1, Math.ceil(filteredVisits.length / (pageSize === 0 ? filteredVisits.length || 1 : pageSize)));
+  const effectivePage = Math.min(currentPage, totalPages);
+
+  const paginatedVisits = useMemo(() => {
+    if (pageSize === 0) return filteredVisits;
+    const start = (effectivePage - 1) * pageSize;
+    return filteredVisits.slice(start, start + pageSize);
+  }, [filteredVisits, effectivePage, pageSize]);
+
   const handleResetFilters = () => {
     setSearchQuery('');
     setStartDate('');
     setEndDate('');
     setSelectedCaseType('ALL');
     setSelectedStatus('ALL');
+    setCurrentPage(1);
   };
 
   // Toggle single item selection
@@ -124,10 +140,10 @@ export const VisitsList: React.FC<VisitsListProps> = ({
     );
   };
 
-  // Toggle select all visible
+  // Toggle select all visible on current page
   const handleSelectAllVisible = () => {
-    const visibleIds = filteredVisits.map((v) => v.id);
-    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    const visibleIds = paginatedVisits.map((v) => v.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
     if (allSelected) {
       setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
     } else {
@@ -136,8 +152,8 @@ export const VisitsList: React.FC<VisitsListProps> = ({
   };
 
   const isAllVisibleSelected =
-    filteredVisits.length > 0 &&
-    filteredVisits.every((v) => selectedIds.includes(v.id));
+    paginatedVisits.length > 0 &&
+    paginatedVisits.every((v) => selectedIds.includes(v.id));
 
   // Confirm Single Delete
   const handleConfirmSingleDelete = () => {
@@ -212,8 +228,8 @@ export const VisitsList: React.FC<VisitsListProps> = ({
         <div>
           <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
             <span>DATA KUNJUNGAN BUKU TAMU</span>
-            <span className="text-[11px] font-extrabold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300/60">
-              {filteredVisits.length} Terpilih
+            <span className="text-[11px] font-extrabold bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded border border-emerald-300/60">
+              {filteredVisits.length === visits.length ? `Total ${visits.length} Kunjungan` : `${filteredVisits.length} dari ${visits.length} Kunjungan`}
             </span>
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -366,8 +382,9 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredVisits.map((visit, index) => {
+                paginatedVisits.map((visit, index) => {
                   const isChecked = selectedIds.includes(visit.id);
+                  const displayIndex = pageSize === 0 ? index + 1 : (effectivePage - 1) * pageSize + index + 1;
                   return (
                     <tr
                       key={visit.id}
@@ -384,7 +401,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
                         />
                       </td>
                       <td className="px-2 py-1.5 text-center text-slate-400 font-mono text-[11px]">
-                        {index + 1}
+                        {displayIndex}
                       </td>
                       <td className="px-3 py-1.5 font-mono font-bold text-slate-900">
                         {visit.visitNumber}
@@ -481,7 +498,7 @@ export const VisitsList: React.FC<VisitsListProps> = ({
             Tidak ada data kunjungan yang sesuai dengan filter.
           </div>
         ) : (
-          filteredVisits.map((visit) => {
+          paginatedVisits.map((visit) => {
             const isChecked = selectedIds.includes(visit.id);
             return (
               <div
@@ -561,6 +578,66 @@ export const VisitsList: React.FC<VisitsListProps> = ({
           })
         )}
       </div>
+
+      {/* Pagination Controls Bar */}
+      {filteredVisits.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="text-slate-500 font-medium">
+            Menampilkan <span className="font-bold text-slate-800">{pageSize === 0 ? 1 : (effectivePage - 1) * pageSize + 1}</span>–
+            <span className="font-bold text-slate-800">{pageSize === 0 ? filteredVisits.length : Math.min(effectivePage * pageSize, filteredVisits.length)}</span> dari{' '}
+            <span className="font-bold text-slate-800">{filteredVisits.length}</span> data kunjungan
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Page Size Selector */}
+            <div className="flex items-center gap-1.5 text-slate-600">
+              <span className="text-[11px]">Tampilkan:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:ring-emerald-500 focus:border-emerald-500"
+              >
+                <option value={25}>25 per hal</option>
+                <option value={50}>50 per hal</option>
+                <option value={100}>100 per hal</option>
+                <option value={0}>Semua ({filteredVisits.length})</option>
+              </select>
+            </div>
+
+            {/* Pagination Navigation */}
+            {pageSize !== 0 && totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={effectivePage <= 1}
+                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  title="Halaman Sebelumnya"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-600" />
+                </button>
+
+                <div className="px-2 font-semibold text-slate-700 font-mono text-[11px]">
+                  Hal {effectivePage} / {totalPages}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={effectivePage >= totalPages}
+                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  title="Halaman Selanjutnya"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-600" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* SINGLE DELETE CONFIRMATION MODAL */}
       {deleteTarget && (

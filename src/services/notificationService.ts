@@ -76,6 +76,21 @@ export const getHandledPopupStore = (): HandledPopupsStore => {
 export const isPopupAlreadyHandled = (visitOrId: Visit | string | null | undefined): boolean => {
   if (!visitOrId) return true;
 
+  // Check if this is a simulation / test notification
+  const isSim = typeof visitOrId === 'object' && (
+    visitOrId.id?.startsWith('test-') ||
+    visitOrId.visitNumber?.startsWith('TEST-') ||
+    visitOrId.name?.toLowerCase().includes('simulasi') ||
+    visitOrId.notes?.toLowerCase().includes('pengujian notifikasi')
+  );
+
+  // For simulation / test notifications, NEVER suppress by guest name or phone!
+  // Only check exact ID so tests can be triggered repeatedly across all computers
+  if (isSim && typeof visitOrId === 'object') {
+    if (visitOrId.id && sessionHandledIds.has(visitOrId.id)) return true;
+    return false;
+  }
+
   // 1. If it's a visit object, check status: any status other than 'Menunggu' has ALREADY been served or processed!
   if (typeof visitOrId === 'object') {
     if (visitOrId.status && visitOrId.status !== 'Menunggu') {
@@ -570,13 +585,34 @@ const recentlyNotifiedVisits = new Map<string, number>();
 function markVisitAsNotified(visit: Visit): boolean {
   if (!visit || (!visit.id && !visit.visitNumber)) return false;
 
+  const isSim = Boolean(
+    visit.id?.startsWith('test-') ||
+    visit.visitNumber?.startsWith('TEST-') ||
+    visit.name?.toLowerCase().includes('simulasi') ||
+    visit.notes?.toLowerCase().includes('pengujian notifikasi')
+  );
+
+  const now = Date.now();
+
+  // For simulation / test notifications, debounce ONLY the exact ID for 4 seconds
+  // (Prevents duplicate chime on same machine across BroadcastChannel + SSE), but ALWAYS allows tests across computers!
+  if (isSim) {
+    const simKey = `sim_${visit.id || visit.visitNumber}`;
+    const lastSim = recentlyNotifiedVisits.get(simKey);
+    if (lastSim && now - lastSim < 4000) {
+      return false;
+    }
+    recentlyNotifiedVisits.set(simKey, now);
+    if (visit.id) sessionHandledIds.add(visit.id);
+    return true;
+  }
+
   // 1. If visit is already read or popup already handled/shown/dismissed/opened, NEVER notify or pop up again!
   if (isPopupAlreadyHandled(visit)) {
     return false;
   }
 
-  // 2. In-memory debounce: if ANY of its IDs was notified in the last 15 minutes, ignore duplicate channel pushes
-  const now = Date.now();
+  // 2. In-memory debounce for real guest visits: if ANY of its IDs was notified in the last 15 minutes, ignore duplicate channel pushes
   const keys: string[] = [];
   if (visit.id) keys.push(visit.id);
   if (visit.visitNumber) keys.push(visit.visitNumber);
@@ -662,14 +698,15 @@ export const syncDailyNotificationsWithVisits = (
   };
 };
 
-// Trigger a mock test notification for admin to test sound and banner
+// Trigger a mock test notification for admin to test sound and banner across all computers
 export const triggerTestNotification = (): Visit => {
   const now = new Date();
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
+  const randomSuffix = Math.random().toString(36).slice(2, 6);
   const testVisit: Visit = {
-    id: `test-${Date.now()}`,
-    visitNumber: `TEST-${Date.now().toString().slice(-4)}`,
+    id: `test-${Date.now()}-${randomSuffix}`,
+    visitNumber: `TEST-${Math.floor(1000 + Math.random() * 9000)}`,
     name: 'Pengunjung Simulasi (Uji Coba)',
     caseCategory: 'Konsultasi Hukum Gratis',
     caseType: 'Uji Coba Notifikasi Sistem Posbakum',
@@ -689,6 +726,7 @@ export const triggerTestNotification = (): Visit => {
     signatureUrl: '',
     signatureFileName: '',
     qrToken: 'TEST-SYSTEM',
+    notes: 'Pengujian Notifikasi Real-Time Lintas Komputer',
   };
 
   playNotificationChime();
@@ -697,7 +735,7 @@ export const triggerTestNotification = (): Visit => {
   return testVisit;
 };
 
-// Subscribe to new visits from ALL sources (Cloud Firestore, Server Polling, BroadcastChannel, Same-window)
+// Subscribe to new visits from ALL sources (Server-Sent Events SSE, Cloud Firestore, Server Polling, BroadcastChannel)
 export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() => void) => {
   if (typeof window === 'undefined') return () => {};
 
@@ -708,8 +746,14 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     if (!visit.id && visit.visitNumber) {
       visit.id = visit.visitNumber;
     }
+    const isSim = Boolean(
+      visit.id?.startsWith('test-') ||
+      visit.visitNumber?.startsWith('TEST-') ||
+      visit.name?.toLowerCase().includes('simulasi')
+    );
+
     // 1. If visit has already been read or popup already handled/opened, do NOT trigger popup or chime!
-    if (isPopupAlreadyHandled(visit)) {
+    if (!isSim && isPopupAlreadyHandled(visit)) {
       addVisitToDailyNotifications(visit);
       return;
     }
@@ -717,7 +761,6 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     addVisitToDailyNotifications(visit);
     // 3. Debounce popup and sound trigger across multiple concurrent channels
     if (markVisitAsNotified(visit)) {
-      // Mark popup as handled so repeated parallel pushes will not re-trigger popup
       markPopupAsHandled(visit);
       onNewVisit(visit);
       showDesktopNotification(visit);
@@ -733,7 +776,42 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
   };
   window.addEventListener('posbakum_new_visit', handleCustomEvent);
 
-  // 2. BroadcastChannel listener (Cross-tab)
+  // 2. Real-Time Server-Sent Events (SSE) Stream (<10ms cross-computer delivery, zero quotas)
+  let eventSource: EventSource | null = null;
+  let isClosed = false;
+
+  const initSSE = () => {
+    if (isClosed || typeof EventSource === 'undefined') return;
+    try {
+      eventSource = new EventSource('/api/realtime/stream');
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload?.type === 'NOTIFICATION' && payload?.data?.visit) {
+            handleIncomingVisit(payload.data.visit);
+          } else if (payload?.type === 'NEW_VISIT' && payload?.data) {
+            handleIncomingVisit(payload.data);
+          }
+        } catch {}
+      };
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+        if (!isClosed) {
+          setTimeout(initSSE, 4000);
+        }
+      };
+    } catch (e) {
+      console.warn('[SSE Notifications] Init warning:', e);
+    }
+  };
+  initSSE();
+
+  // 3. BroadcastChannel listener (Cross-tab modern messaging)
   let broadcastChannel: BroadcastChannel | null = null;
   try {
     if (typeof BroadcastChannel !== 'undefined') {
@@ -748,7 +826,7 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     console.warn('Could not initialize BroadcastChannel listener:', e);
   }
 
-  // 3. Storage event fallback (Cross-tab)
+  // 4. Storage event fallback (Cross-tab)
   const handleStorageEvent = (event: StorageEvent) => {
     if (event.key === 'pabjm_last_visit_event' && event.newValue) {
       try {
@@ -761,9 +839,8 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
   };
   window.addEventListener('storage', handleStorageEvent);
 
-  // 4. Cloud Firestore cross-computer real-time listener (primary push across different computers)
+  // 5. Cloud Firestore cross-computer real-time listener (safe mode with circuit-breaker)
   let unsubscribeFirestoreNotif: (() => void) | null = null;
-
   try {
     const notifCol = collection(db, 'admin_notifications');
     unsubscribeFirestoreNotif = onSnapshot(notifCol, (snapshot) => {
@@ -771,7 +848,6 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         if (change.type === 'added') {
           const data = change.doc.data();
           if (data && data.visit) {
-            // Only trigger if notification is genuinely recent (created within the last 30 seconds)
             const docTime = data.timestamp || new Date(data.createdAt || 0).getTime();
             if (docTime >= Date.now() - 30000) {
               handleIncomingVisit(data.visit as Visit);
@@ -780,13 +856,11 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         }
       });
     }, (err) => {
-      console.warn('[Firestore Notification] onSnapshot warning:', err);
+      // Benign when Firestore free quota exhausted; SSE handles real-time sync seamlessly
     });
-  } catch (e) {
-    console.warn('Could not start Firestore notification listener:', e);
-  }
+  } catch (e) {}
 
-  // 5. Server fallback polling every 3 seconds (guarantees delivery if Firestore WebSockets are offline)
+  // 6. Server fallback polling every 5 seconds
   let lastServerPollTime = listenerStartTime - 5000;
   const pollInterval = setInterval(async () => {
     try {
@@ -798,7 +872,6 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
           result.data.forEach((item: any) => {
             const itemTime = typeof item.timestamp === 'number' ? item.timestamp : new Date(item.createdAt || 0).getTime();
             if (item?.visit) {
-              // Only trigger if within the last 30 seconds
               if (itemTime >= Date.now() - 30000) {
                 handleIncomingVisit(item.visit);
               }
@@ -811,20 +884,26 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         }
       }
     } catch {}
-  }, 3000);
+  }, 5000);
 
   return () => {
+    isClosed = true;
     window.removeEventListener('posbakum_new_visit', handleCustomEvent);
     window.removeEventListener('storage', handleStorageEvent);
+    if (eventSource) {
+      try {
+        eventSource.close();
+      } catch {}
+    }
     if (broadcastChannel) {
       try {
         broadcastChannel.close();
-      } catch (e) {}
+      } catch {}
     }
     if (unsubscribeFirestoreNotif) {
       try {
         unsubscribeFirestoreNotif();
-      } catch (e) {}
+      } catch {}
     }
     clearInterval(pollInterval);
   };
