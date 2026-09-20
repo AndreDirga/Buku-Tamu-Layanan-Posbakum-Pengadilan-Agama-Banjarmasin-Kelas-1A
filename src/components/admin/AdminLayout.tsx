@@ -53,6 +53,7 @@ import {
   isPopupAlreadyHandled,
   markPopupAsHandled
 } from '../../services/notificationService';
+import { realtimeHub } from '../../services/realtimeHub';
 import { NewVisitNotificationPopup } from './NewVisitNotificationPopup';
 
 interface AdminLayoutProps {
@@ -176,7 +177,33 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       }
     });
 
-    return unsubscribe;
+    const unsubHub = realtimeHub.addListener((type, data) => {
+      if (type === 'DELETE_VISITS') {
+        const deletedIds = data?.deletedIds || data?.ids;
+        if (Array.isArray(deletedIds)) {
+          const deleteSet = new Set(deletedIds);
+          setNotificationQueue((prev) =>
+            prev.filter((v) => !deleteSet.has(v.id) && (!v.visitNumber || !deleteSet.has(v.visitNumber)))
+          );
+          if (
+            currentPopupVisitRef.current &&
+            (deleteSet.has(currentPopupVisitRef.current.id) ||
+              (currentPopupVisitRef.current.visitNumber && deleteSet.has(currentPopupVisitRef.current.visitNumber)))
+          ) {
+            setCurrentPopupVisit(null);
+          }
+          const store = getDailyNotificationStore();
+          setNotificationHistory(store.visits);
+          setReadVisitIds(store.readVisitIds);
+          setUnreadCount(getDailyUnreadCount());
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      unsubHub();
+    };
   }, []);
 
   // Whenever visits data syncs from server/Firestore, ensure any non-waiting visits or handled visits are purged from popup and queue

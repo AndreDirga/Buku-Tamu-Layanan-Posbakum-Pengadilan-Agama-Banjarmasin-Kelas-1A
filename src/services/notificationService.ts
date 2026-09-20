@@ -1,6 +1,7 @@
 import { Visit } from '../types/posbakum';
 import { db } from './firebase';
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { realtimeHub } from './realtimeHub';
 
 const NOTIFICATION_CHANNEL_NAME = 'posbakum_realtime_channel';
 const SOUND_PREF_KEY = 'pabjm_notification_sound_enabled';
@@ -10,6 +11,21 @@ const PERMANENT_READ_KEY = 'pabjm_permanent_read_visits_v1';
 
 // In-memory set of handled IDs during the current session for 0ms lookup
 const sessionHandledIds = new Set<string>();
+
+// Helper to check if a visit has been deleted
+export const isVisitDeletedLocal = (idOrNumber?: string): boolean => {
+  if (!idOrNumber || typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem('pabjm_posbakum_deleted_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.includes(idOrNumber)) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+};
 
 // Helper to get local date key in YYYY-MM-DD format
 export const getTodayDateKey = (): string => {
@@ -76,6 +92,13 @@ export const getHandledPopupStore = (): HandledPopupsStore => {
 export const isPopupAlreadyHandled = (visitOrId: Visit | string | null | undefined): boolean => {
   if (!visitOrId) return true;
 
+  // If deleted, never handle or show popup
+  if (typeof visitOrId === 'string') {
+    if (isVisitDeletedLocal(visitOrId)) return true;
+  } else if (typeof visitOrId === 'object') {
+    if (isVisitDeletedLocal(visitOrId.id) || isVisitDeletedLocal(visitOrId.visitNumber)) return true;
+  }
+
   // Check if this is a simulation / test notification
   const isSim = typeof visitOrId === 'object' && (
     visitOrId.id?.startsWith('test-') ||
@@ -96,39 +119,14 @@ export const isPopupAlreadyHandled = (visitOrId: Visit | string | null | undefin
     if (visitOrId.status && visitOrId.status !== 'Menunggu') {
       return true;
     }
-    // Check age: if created more than 2 minutes (120s) ago, it is NOT a live popup!
-    const createdTime = new Date(visitOrId.visitedAt || visitOrId.createdAt || 0).getTime();
-    if (createdTime > 0 && Date.now() - createdTime > 120000) {
-      return true;
-    }
   }
 
   const idsToCheck: string[] = [];
   if (typeof visitOrId === 'string') {
     idsToCheck.push(visitOrId);
-    idsToCheck.push(visitOrId.replace(/[^a-zA-Z0-9]/g, ''));
   } else {
-    if (visitOrId.id) {
-      idsToCheck.push(visitOrId.id);
-      idsToCheck.push(visitOrId.id.replace(/[^a-zA-Z0-9]/g, ''));
-    }
-    if (visitOrId.visitNumber) {
-      idsToCheck.push(visitOrId.visitNumber);
-      idsToCheck.push(visitOrId.visitNumber.replace(/[^a-zA-Z0-9]/g, ''));
-    }
-    if (visitOrId.name) {
-      const cleanName = visitOrId.name.trim().toLowerCase();
-      idsToCheck.push(`name_${cleanName}`);
-      if (visitOrId.visitNumber) {
-        idsToCheck.push(`${cleanName}_${visitOrId.visitNumber}`);
-      }
-      if (visitOrId.whatsapp) {
-        idsToCheck.push(`${cleanName}_${visitOrId.whatsapp}`);
-      }
-      if (visitOrId.visitedAt || visitOrId.createdAt) {
-        idsToCheck.push(`${visitOrId.name}_${visitOrId.visitedAt || visitOrId.createdAt}`);
-      }
-    }
+    if (visitOrId.id) idsToCheck.push(visitOrId.id);
+    if (visitOrId.visitNumber) idsToCheck.push(visitOrId.visitNumber);
   }
 
   // 2. Check in-memory session Set (0ms lookup)
@@ -292,7 +290,23 @@ export const getDailyNotificationStore = (): DailyNotificationStore => {
 export const saveDailyNotificationStore = (store: DailyNotificationStore): void => {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(store));
+    const lightweightStore: DailyNotificationStore = {
+      ...store,
+      visits: (store.visits || []).slice(0, 30).map((v) => {
+        const hasHeavySelfie = v.selfieUrl && v.selfieUrl.length > 100;
+        const hasHeavySig = v.signatureUrl && v.signatureUrl.length > 100;
+        if (!hasHeavySelfie && !hasHeavySig) return v;
+        return {
+          ...v,
+          selfieUrl: hasHeavySelfie ? '' : v.selfieUrl,
+          signatureUrl: hasHeavySig ? '' : v.signatureUrl,
+        };
+      }),
+    };
+    try {
+      localStorage.removeItem(DAILY_NOTIFICATIONS_KEY);
+    } catch {}
+    localStorage.setItem(DAILY_NOTIFICATIONS_KEY, JSON.stringify(lightweightStore));
   } catch (e) {
     console.warn('Failed to save daily notifications store:', e);
   }
@@ -321,6 +335,43 @@ export const saveDailyNotifications = (visits: Visit[]): void => {
     ...current,
     visits,
   });
+};
+
+// Remove visits from daily notifications (when deleted)
+export const removeVisitFromDailyNotifications = (idsOrNumbers: string | string[]): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  const arr = Array.isArray(idsOrNumbers) ? idsOrNumbers : [idsOrNumbers].filter(Boolean);
+  if (!arr || arr.length === 0) {
+    return {
+      visits: current.visits,
+      readVisitIds: current.readVisitIds,
+      unreadCount: current.visits.filter((v) => !current.readVisitIds.includes(v.id)).length,
+    };
+  }
+
+  const idSet = new Set(arr);
+  const updatedVisits = current.visits.filter(
+    (v) => !idSet.has(v.id) && (!v.visitNumber || !idSet.has(v.visitNumber))
+  );
+  const updatedReads = current.readVisitIds.filter((id) => !idSet.has(id));
+
+  const updatedStore: DailyNotificationStore = {
+    ...current,
+    visits: updatedVisits,
+    readVisitIds: updatedReads,
+  };
+  saveDailyNotificationStore(updatedStore);
+
+  arr.forEach((id) => {
+    sessionHandledIds.delete(id);
+  });
+
+  const unreadCount = updatedVisits.filter((v) => !updatedReads.includes(v.id)).length;
+  return {
+    visits: updatedVisits,
+    readVisitIds: updatedReads,
+    unreadCount,
+  };
 };
 
 // Add new visit to today's notification history (preserves read status if already read)
@@ -480,7 +531,9 @@ export const getNotificationSoundEnabled = (): boolean => {
 };
 
 export const setNotificationSoundEnabled = (enabled: boolean) => {
-  localStorage.setItem(SOUND_PREF_KEY, enabled ? 'true' : 'false');
+  try {
+    localStorage.setItem(SOUND_PREF_KEY, enabled ? 'true' : 'false');
+  } catch {}
 };
 
 // Helper to request browser desktop notification permission
@@ -520,26 +573,28 @@ export const showDesktopNotification = (visit: Visit) => {
 export const broadcastNewVisit = async (visit: Visit) => {
   if (typeof window === 'undefined') return;
 
-  // 1. Same-window custom event (0ms)
+  // 1. RealtimeHub local broadcast (same-window + cross-tab)
+  try {
+    realtimeHub.broadcastLocal('NOTIFICATION', { visit });
+    realtimeHub.broadcastLocal('NEW_VISIT', visit);
+  } catch {}
+
+  // 2. Same-window custom event (0ms)
   window.dispatchEvent(
     new CustomEvent('posbakum_new_visit', { detail: visit })
   );
 
-  // 2. LocalStorage event for cross-tab fallback
+  // 3. LocalStorage event for cross-tab fallback
   try {
+    const lightVisit = {
+      ...visit,
+      selfieUrl: visit.selfieUrl && visit.selfieUrl.length > 200 ? '' : visit.selfieUrl,
+      signatureUrl: visit.signatureUrl && visit.signatureUrl.length > 200 ? '' : visit.signatureUrl,
+    };
     localStorage.setItem(
       'pabjm_last_visit_event',
-      JSON.stringify({ timestamp: Date.now(), visitId: visit.id, visit })
+      JSON.stringify({ timestamp: Date.now(), visitId: visit.id, visit: lightVisit })
     );
-  } catch (e) {}
-
-  // 3. BroadcastChannel for modern cross-tab messaging
-  try {
-    if (typeof BroadcastChannel !== 'undefined') {
-      const bc = new BroadcastChannel(NOTIFICATION_CHANNEL_NAME);
-      bc.postMessage({ type: 'NEW_VISIT', visit });
-      setTimeout(() => bc.close(), 1000);
-    }
   } catch (e) {}
 
   // 4. Server API broadcast endpoint (relays to all connected computers via backend)
@@ -612,25 +667,19 @@ function markVisitAsNotified(visit: Visit): boolean {
     return false;
   }
 
-  // 2. In-memory debounce for real guest visits: if ANY of its IDs was notified in the last 15 minutes, ignore duplicate channel pushes
+  // 2. In-memory debounce for real guest visits: if this visit was notified on this machine recently, ignore duplicate channel pushes
   const keys: string[] = [];
   if (visit.id) keys.push(visit.id);
   if (visit.visitNumber) keys.push(visit.visitNumber);
-  if (visit.name) {
-    const cleanName = visit.name.trim().toLowerCase();
-    keys.push(`name_${cleanName}`);
-    if (visit.visitNumber) keys.push(`${cleanName}_${visit.visitNumber}`);
-    if (visit.whatsapp) keys.push(`${cleanName}_${visit.whatsapp}`);
-  }
 
   for (const k of keys) {
     const lastTime = recentlyNotifiedVisits.get(k);
-    if (lastTime && now - lastTime < 900000) {
+    if (lastTime && now - lastTime < 300000) {
       return false;
     }
   }
 
-  // Record debounce timestamp for all keys
+  // Record debounce timestamp for exact IDs
   keys.forEach((k) => recentlyNotifiedVisits.set(k, now));
   return true;
 }
@@ -735,7 +784,7 @@ export const triggerTestNotification = (): Visit => {
   return testVisit;
 };
 
-// Subscribe to new visits from ALL sources (Server-Sent Events SSE, Cloud Firestore, Server Polling, BroadcastChannel)
+// Subscribe to new visits from ALL sources (RealtimeHub SSE, Cloud Firestore, Server Polling, BroadcastChannel)
 export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() => void) => {
   if (typeof window === 'undefined') return () => {};
 
@@ -752,6 +801,11 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
       visit.name?.toLowerCase().includes('simulasi')
     );
 
+    // If visit is deleted, do NOT notify or pop up!
+    if (isVisitDeletedLocal(visit.id) || isVisitDeletedLocal(visit.visitNumber)) {
+      return;
+    }
+
     // 1. If visit has already been read or popup already handled/opened, do NOT trigger popup or chime!
     if (!isSim && isPopupAlreadyHandled(visit)) {
       addVisitToDailyNotifications(visit);
@@ -761,13 +815,27 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     addVisitToDailyNotifications(visit);
     // 3. Debounce popup and sound trigger across multiple concurrent channels
     if (markVisitAsNotified(visit)) {
-      markPopupAsHandled(visit);
+      playNotificationChime();
       onNewVisit(visit);
       showDesktopNotification(visit);
     }
   };
 
-  // 1. Same-window listener
+  // 1. Listen to centralized RealtimeHub (handles SSE stream, BroadcastChannel, and fallback polling)
+  const unsubRealtimeHub = realtimeHub.addListener((type, data) => {
+    if (type === 'NOTIFICATION' && data?.visit) {
+      handleIncomingVisit(data.visit);
+    } else if (type === 'NEW_VISIT' && data) {
+      handleIncomingVisit(data);
+    } else if (type === 'DELETE_VISITS') {
+      const deletedIds = data?.deletedIds || data?.ids;
+      if (Array.isArray(deletedIds)) {
+        removeVisitFromDailyNotifications(deletedIds);
+      }
+    }
+  });
+
+  // 2. Same-window listener
   const handleCustomEvent = (event: Event) => {
     const customEv = event as CustomEvent<Visit>;
     if (customEv.detail) {
@@ -776,57 +844,7 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
   };
   window.addEventListener('posbakum_new_visit', handleCustomEvent);
 
-  // 2. Real-Time Server-Sent Events (SSE) Stream (<10ms cross-computer delivery, zero quotas)
-  let eventSource: EventSource | null = null;
-  let isClosed = false;
-
-  const initSSE = () => {
-    if (isClosed || typeof EventSource === 'undefined') return;
-    try {
-      eventSource = new EventSource('/api/realtime/stream');
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload?.type === 'NOTIFICATION' && payload?.data?.visit) {
-            handleIncomingVisit(payload.data.visit);
-          } else if (payload?.type === 'NEW_VISIT' && payload?.data) {
-            handleIncomingVisit(payload.data);
-          }
-        } catch {}
-      };
-
-      eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close();
-          eventSource = null;
-        }
-        if (!isClosed) {
-          setTimeout(initSSE, 4000);
-        }
-      };
-    } catch (e) {
-      console.warn('[SSE Notifications] Init warning:', e);
-    }
-  };
-  initSSE();
-
-  // 3. BroadcastChannel listener (Cross-tab modern messaging)
-  let broadcastChannel: BroadcastChannel | null = null;
-  try {
-    if (typeof BroadcastChannel !== 'undefined') {
-      broadcastChannel = new BroadcastChannel(NOTIFICATION_CHANNEL_NAME);
-      broadcastChannel.onmessage = (event) => {
-        if (event.data?.type === 'NEW_VISIT' && event.data.visit) {
-          handleIncomingVisit(event.data.visit);
-        }
-      };
-    }
-  } catch (e) {
-    console.warn('Could not initialize BroadcastChannel listener:', e);
-  }
-
-  // 4. Storage event fallback (Cross-tab)
+  // 3. Storage event fallback (Cross-tab)
   const handleStorageEvent = (event: StorageEvent) => {
     if (event.key === 'pabjm_last_visit_event' && event.newValue) {
       try {
@@ -839,7 +857,7 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
   };
   window.addEventListener('storage', handleStorageEvent);
 
-  // 5. Cloud Firestore cross-computer real-time listener (safe mode with circuit-breaker)
+  // 4. Cloud Firestore cross-computer real-time listener (safe mode with circuit-breaker)
   let unsubscribeFirestoreNotif: (() => void) | null = null;
   try {
     const notifCol = collection(db, 'admin_notifications');
@@ -848,10 +866,7 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
         if (change.type === 'added') {
           const data = change.doc.data();
           if (data && data.visit) {
-            const docTime = data.timestamp || new Date(data.createdAt || 0).getTime();
-            if (docTime >= Date.now() - 30000) {
-              handleIncomingVisit(data.visit as Visit);
-            }
+            handleIncomingVisit(data.visit as Visit);
           }
         }
       });
@@ -860,8 +875,8 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
     });
   } catch (e) {}
 
-  // 6. Server fallback polling every 5 seconds
-  let lastServerPollTime = listenerStartTime - 5000;
+  // 5. Server fallback polling every 4 seconds
+  let lastServerPollTime = listenerStartTime - 10000;
   const pollInterval = setInterval(async () => {
     try {
       const res = await fetch(`/api/notifications/recent?since=${lastServerPollTime}`);
@@ -872,34 +887,22 @@ export const subscribeToNewVisits = (onNewVisit: (visit: Visit) => void): (() =>
           result.data.forEach((item: any) => {
             const itemTime = typeof item.timestamp === 'number' ? item.timestamp : new Date(item.createdAt || 0).getTime();
             if (item?.visit) {
-              if (itemTime >= Date.now() - 30000) {
-                handleIncomingVisit(item.visit);
-              }
+              handleIncomingVisit(item.visit);
             }
             if (itemTime > maxTimestamp) {
               maxTimestamp = itemTime;
             }
           });
-          lastServerPollTime = Math.max(lastServerPollTime, maxTimestamp, Date.now() - 10000);
+          lastServerPollTime = Math.max(lastServerPollTime, maxTimestamp);
         }
       }
     } catch {}
-  }, 5000);
+  }, 4000);
 
   return () => {
-    isClosed = true;
+    unsubRealtimeHub();
     window.removeEventListener('posbakum_new_visit', handleCustomEvent);
     window.removeEventListener('storage', handleStorageEvent);
-    if (eventSource) {
-      try {
-        eventSource.close();
-      } catch {}
-    }
-    if (broadcastChannel) {
-      try {
-        broadcastChannel.close();
-      } catch {}
-    }
     if (unsubscribeFirestoreNotif) {
       try {
         unsubscribeFirestoreNotif();

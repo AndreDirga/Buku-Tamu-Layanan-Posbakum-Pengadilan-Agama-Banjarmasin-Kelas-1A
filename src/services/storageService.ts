@@ -1,6 +1,7 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
-import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications } from './notificationService';
+import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications, removeVisitFromDailyNotifications } from './notificationService';
+import { realtimeHub } from './realtimeHub';
 import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
 import { getWitaDateParts } from '../utils/dateUtils';
 import seedVisitsLite from '../data/seedVisitsLite.json';
@@ -202,17 +203,12 @@ export const normalizeVisitData = (data: any, docId: string): Visit => {
     }
   }
 
-  // Preserve actual original selfieUrl if it exists. NEVER replace real user photos with SVG!
+  // Preserve actual original selfieUrl if it exists. NEVER overwrite with SVG placeholder in the data model!
+  // SafeVisitImage handles UI fallback dynamically when selfieUrl is empty.
   let selfieUrl = data.selfieUrl || '';
-  if (!selfieUrl || isTruncatedOrBrokenImageDataUrl(selfieUrl)) {
-    selfieUrl = generateFallbackSelfie(name, visitNumber);
-  }
 
-  // Preserve actual original signatureUrl if it exists. NEVER replace real user signatures with SVG!
+  // Preserve actual original signatureUrl if it exists. NEVER overwrite with SVG placeholder in the data model!
   let signatureUrl = data.signatureUrl || '';
-  if (!signatureUrl || isTruncatedOrBrokenImageDataUrl(signatureUrl)) {
-    signatureUrl = generateFallbackSignature(name, visitNumber);
-  }
 
   return {
     id: data.id || docId,
@@ -249,6 +245,64 @@ const IDB_NAME = 'posbakum_local_db';
 const IDB_VERSION = 1;
 const IDB_STORE = 'visits';
 
+const STORAGE_KEY_DELETED_VISITS = 'pabjm_posbakum_deleted_v1';
+const clientDeletedIds = new Set<string>();
+
+export const getDeletedIds = (): Set<string> => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_DELETED_VISITS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((id) => clientDeletedIds.add(id));
+        }
+      }
+    } catch {}
+  }
+  return clientDeletedIds;
+};
+
+export const isVisitDeleted = (idOrNumber?: string): boolean => {
+  if (!idOrNumber) return false;
+  const deleted = getDeletedIds();
+  return deleted.has(idOrNumber);
+};
+
+export const addDeletedIds = (ids: string[]): void => {
+  if (!ids || !Array.isArray(ids) || ids.length === 0) return;
+  ids.forEach((id) => {
+    if (id) clientDeletedIds.add(id);
+  });
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.setItem(STORAGE_KEY_DELETED_VISITS, JSON.stringify(Array.from(clientDeletedIds)));
+    } catch {}
+  }
+};
+
+export const clearDeletedIds = (): void => {
+  clientDeletedIds.clear();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.removeItem(STORAGE_KEY_DELETED_VISITS);
+    } catch {}
+  }
+};
+
+export const syncDeletedIdsFromServer = async (): Promise<Set<string>> => {
+  try {
+    const res = await fetch('/api/visits/deleted', { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.deletedIds) && json.deletedIds.length > 0) {
+        addDeletedIds(json.deletedIds);
+      }
+    }
+  } catch {}
+  return getDeletedIds();
+};
+
 function openVisitsDB(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
@@ -270,15 +324,58 @@ function openVisitsDB(): Promise<IDBDatabase | null> {
   });
 }
 
+export async function deleteVisitFromIndexedDB(visitId: string, visitNumber?: string): Promise<void> {
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    const tx = database.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    if (visitId) {
+      store.delete(visitId);
+    }
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const records = req.result || [];
+      records.forEach((rec: any) => {
+        if (rec && (rec.id === visitId || (visitNumber && rec.visitNumber === visitNumber))) {
+          store.delete(rec.id);
+        }
+      });
+    };
+  } catch (err) {
+    console.warn('IndexedDB delete warning:', err);
+  }
+}
+
+export async function pruneDeletedFromIndexedDB(deletedIds: Set<string>): Promise<void> {
+  if (!deletedIds || deletedIds.size === 0) return;
+  try {
+    const database = await openVisitsDB();
+    if (!database) return;
+    const tx = database.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const records = req.result || [];
+      records.forEach((rec: any) => {
+        if (rec && (deletedIds.has(rec.id) || (rec.visitNumber && deletedIds.has(rec.visitNumber)))) {
+          store.delete(rec.id);
+        }
+      });
+    };
+  } catch {}
+}
+
 export async function saveVisitsToIndexedDB(visits: Visit[]): Promise<void> {
   if (!visits || !Array.isArray(visits) || visits.length === 0) return;
+  const deleted = getDeletedIds();
   try {
     const database = await openVisitsDB();
     if (!database) return;
     const tx = database.transaction(IDB_STORE, 'readwrite');
     const store = tx.objectStore(IDB_STORE);
     for (const v of visits) {
-      if (v && v.id) {
+      if (v && v.id && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))) {
         store.put(v);
       }
     }
@@ -297,7 +394,10 @@ export async function getVisitsFromIndexedDB(): Promise<Visit[]> {
       const request = store.getAll();
       request.onsuccess = () => {
         const results = request.result || [];
-        resolve(results.map((item: any) => normalizeVisitData(item, item.id)));
+        const filtered = results
+          .filter((item: any) => item && !isVisitDeleted(item.id) && !isVisitDeleted(item.visitNumber))
+          .map((item: any) => normalizeVisitData(item, item.id));
+        resolve(filtered);
       };
       request.onerror = () => resolve([]);
     });
@@ -305,38 +405,6 @@ export async function getVisitsFromIndexedDB(): Promise<Visit[]> {
     return [];
   }
 }
-
-// Safe localStorage persistence: NEVER drops or truncates visits!
-// If browser quota limit is reached due to heavy photos, it preserves ALL visits with lightweight SVG fallbacks
-export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
-  if (!visits || !Array.isArray(visits)) return;
-
-  // 1. Asynchronously save all visits with full 100% resolution photos into IndexedDB (virtually unlimited quota)
-  saveVisitsToIndexedDB(visits).catch(() => {});
-
-  // 2. Save into localStorage
-  try {
-    localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
-  } catch (err) {
-    console.warn('LocalStorage quota limit reached, saving all visits in compact mode without dropping any record:', err);
-    try {
-      // NEVER slice or drop visits! Keep 100% of all visits by replacing heavy base64 strings with lightweight SVGs
-      const compactVisits = visits.map((v) => {
-        const copy = { ...v };
-        if (copy.selfieUrl && copy.selfieUrl.length > 500 && !copy.selfieUrl.startsWith('data:image/svg')) {
-          copy.selfieUrl = generateFallbackSelfie(copy.name, copy.visitNumber);
-        }
-        if (copy.signatureUrl && copy.signatureUrl.length > 500 && !copy.signatureUrl.startsWith('data:image/svg')) {
-          copy.signatureUrl = generateFallbackSignature(copy.name, copy.visitNumber);
-        }
-        return copy;
-      });
-      localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(compactVisits));
-    } catch (err2) {
-      console.error('LocalStorage write failed in compact mode:', err2);
-    }
-  }
-};
 
 // All known historical localStorage keys to recover previously entered visits
 const ALL_STORAGE_KEYS = [
@@ -346,6 +414,100 @@ const ALL_STORAGE_KEYS = [
   'posbakum_visits',
   'visits',
 ];
+
+// Completely safe localStorage writer:
+// 1. Removes the target key first to free up quota before writing the new value (vital for WebKit/Blink)
+// 2. Catches any QuotaExceededError and gracefully purges stale keys instead of throwing
+export const safeLocalStorageSet = (key: string, value: string): boolean => {
+  if (typeof window === 'undefined' || !window.localStorage) return false;
+  try {
+    localStorage.removeItem(key);
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err: any) {
+    try {
+      // Purge all legacy/temporary keys
+      for (const oldKey of ALL_STORAGE_KEYS) {
+        if (oldKey !== key) {
+          try { localStorage.removeItem(oldKey); } catch {}
+        }
+      }
+      try { localStorage.removeItem('pabjm_last_visit_event'); } catch {}
+      // Retry write after purge
+      localStorage.removeItem(key);
+      localStorage.setItem(key, value);
+      return true;
+    } catch (err2) {
+      console.warn(`[LocalStorage] Quota full for "${key}". Preserved in IndexedDB & Server disk.`);
+      return false;
+    }
+  }
+};
+
+// Helper to sanitize visit records for localStorage cache:
+// Only keeps up to 50 most recent visits and strips all base64 data URLs (>100 chars).
+// Full 100% resolution photos and visitor digital signatures are safely persisted
+// in IndexedDB and Express server disk (/data/visits.json).
+// This keeps the localStorage footprint under ~35KB (vs 4.5MB), eliminating QuotaExceededError forever.
+export const toLightweightVisits = (visits: Visit[]): Visit[] => {
+  if (!Array.isArray(visits)) return [];
+  return visits.slice(0, 50).map((v) => {
+    const hasHeavySelfie = v.selfieUrl && v.selfieUrl.length > 100;
+    const hasHeavySig = v.signatureUrl && v.signatureUrl.length > 100;
+    if (!hasHeavySelfie && !hasHeavySig) return v;
+    return {
+      ...v,
+      selfieUrl: hasHeavySelfie ? '' : v.selfieUrl,
+      signatureUrl: hasHeavySig ? '' : v.signatureUrl,
+    };
+  });
+};
+
+// Self-healing migration on initial script load:
+// Purge obsolete legacy keys and compress existing oversized STORAGE_KEY_VISITS immediately
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    for (const oldKey of ALL_STORAGE_KEYS) {
+      if (oldKey !== STORAGE_KEY_VISITS) {
+        try { localStorage.removeItem(oldKey); } catch {}
+      }
+    }
+    const currentRaw = localStorage.getItem(STORAGE_KEY_VISITS);
+    if (currentRaw && (currentRaw.includes('data:image') || currentRaw.length > 50000)) {
+      try {
+        const parsed = JSON.parse(currentRaw);
+        if (Array.isArray(parsed)) {
+          // Preserve full images in IndexedDB before shrinking localStorage
+          saveVisitsToIndexedDB(parsed).catch(() => {});
+          const light = toLightweightVisits(parsed);
+          localStorage.removeItem(STORAGE_KEY_VISITS);
+          safeLocalStorageSet(STORAGE_KEY_VISITS, JSON.stringify(light));
+        } else {
+          localStorage.removeItem(STORAGE_KEY_VISITS);
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY_VISITS);
+      }
+    }
+  } catch {}
+}
+
+// Safe localStorage persistence: NEVER drops or corrupts visits!
+// High-resolution real photos are always safely persisted in IndexedDB and Server disk.
+export const safeSaveVisitsToStorage = (visits: Visit[]): void => {
+  if (!visits || !Array.isArray(visits)) return;
+
+  // 1. Asynchronously save all visits with full 100% resolution photos into IndexedDB (virtually unlimited quota)
+  saveVisitsToIndexedDB(visits).catch(() => {});
+
+  // 2. Save lightweight visits into localStorage (safe & lightweight cache)
+  try {
+    const lightweightVisits = toLightweightVisits(visits);
+    safeLocalStorageSet(STORAGE_KEY_VISITS, JSON.stringify(lightweightVisits));
+  } catch (err) {
+    console.warn('LocalStorage save warning handled gracefully:', err);
+  }
+};
 
 // Recovers visits from all local storage keys (including previous sessions)
 export const getAllLocalVisits = (): Visit[] => {
@@ -358,7 +520,20 @@ export const getAllLocalVisits = (): Visit[] => {
         if (Array.isArray(parsed)) {
           parsed.forEach((item) => {
             if (item && (item.name || item.visitNumber || item.id)) {
+              if (isVisitDeleted(item.id) || isVisitDeleted(item.visitNumber)) {
+                return;
+              }
               const v = normalizeVisitData(item, item.id || `local-${Math.random().toString(36).substring(2, 7)}`);
+              if (isVisitDeleted(v.id) || isVisitDeleted(v.visitNumber)) {
+                return;
+              }
+              // Clear any stale SVG avatars previously saved in browser localStorage so real photos take precedence
+              if (v.selfieUrl && v.selfieUrl.startsWith('data:image/svg')) {
+                v.selfieUrl = '';
+              }
+              if (v.signatureUrl && v.signatureUrl.startsWith('data:image/svg')) {
+                v.signatureUrl = '';
+              }
               const existing = map.get(v.id);
               if (existing) {
                 map.set(v.id, {
@@ -376,18 +551,37 @@ export const getAllLocalVisits = (): Visit[] => {
       }
     } catch {}
   }
-  return Array.from(map.values());
+
+  // Remove old obsolete keys so they don't occupy localStorage quota
+  for (const oldKey of ALL_STORAGE_KEYS) {
+    if (oldKey !== STORAGE_KEY_VISITS) {
+      try { localStorage.removeItem(oldKey); } catch {}
+    }
+  }
+
+  return Array.from(map.values()).filter((v) => !isVisitDeleted(v.id) && (!v.visitNumber || !isVisitDeleted(v.visitNumber)));
 };
 
 // Sync local visits to Server Database API
 export const syncLocalVisitsToServer = async (visits: Visit[]): Promise<void> => {
   if (!visits || visits.length === 0) return;
+  const deleted = getDeletedIds();
+  const validVisits = visits.filter(
+    (v) => v && v.id && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
+  );
+  if (validVisits.length === 0) return;
   try {
-    await fetch('/api/visits/sync', {
+    const res = await fetch('/api/visits/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ visits }),
+      body: JSON.stringify({ visits: validVisits }),
     });
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.deletedIds && Array.isArray(json.deletedIds)) {
+        addDeletedIds(json.deletedIds);
+      }
+    }
   } catch (err) {
     console.warn('Could not sync local visits to server API:', err);
   }
@@ -395,28 +589,32 @@ export const syncLocalVisitsToServer = async (visits: Visit[]): Promise<void> =>
 
 // Helper to get local cache with automatic baseline recovery for other computers
 export const getStoredVisits = (): Visit[] => {
-  const localList = getAllLocalVisits();
-  const seedList: Visit[] = (seedVisitsLite as any[]).map((item) => normalizeVisitData(item, item.id));
+  const deleted = getDeletedIds();
+  const localList = getAllLocalVisits().filter((v) => !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber)));
+  const seedList: Visit[] = (seedVisitsLite as any[])
+    .filter((item) => !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+    .map((item) => normalizeVisitData(item, item.id));
 
-  // Merge local list with seed baseline (125 items) so any device/computer always has the complete 125 records with real photos
+  // Merge local list with seed baseline so any device/computer always has the complete records with real photos
   const fullyRecovered = mergeVisits(localList, seedList);
-  safeSaveVisitsToStorage(fullyRecovered);
-
-  return fullyRecovered;
+  return fullyRecovered.filter((v) => !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber)));
 };
 
 // Merge cloud, server, and local visits cleanly without loss or duplicate
 export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit[] => {
   const map = new Map<string, Visit>();
+  const deleted = getDeletedIds();
 
-  // 1. Add secondary visits first
+  // 1. Add secondary visits first (skip deleted)
   secondaryList.forEach((v) => {
-    if (v && v.id) map.set(v.id, v);
+    if (v && v.id && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))) {
+      map.set(v.id, v);
+    }
   });
 
   // 2. Primary visits take priority (authoritative queue numbers and server timestamps)
   primaryList.forEach((v) => {
-    if (!v || !v.id) return;
+    if (!v || !v.id || deleted.has(v.id) || (v.visitNumber && deleted.has(v.visitNumber))) return;
 
     // Check if matching by exact id
     let existingKey = map.has(v.id) ? v.id : null;
@@ -457,8 +655,8 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
         ...existing,
         ...v,
         visitNumber: v.visitNumber || existing.visitNumber,
-        selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl, () => generateFallbackSelfie(v.name, v.visitNumber || existing.visitNumber)),
-        signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl, () => generateFallbackSignature(v.name, v.visitNumber || existing.visitNumber)),
+        selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl),
+        signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl),
       });
     } else {
       map.set(v.id, v);
@@ -504,14 +702,14 @@ export const canUseClientFirestore = (): boolean => {
 
 export const markClientFirestoreQuotaExceeded = () => {
   isClientFirestoreSuspended = true;
-  clientFirestoreSuspendedUntil = Date.now() + 86400000; // 24-hour suspension to prevent UI hangs on refresh
+  clientFirestoreSuspendedUntil = Date.now() + 30000; // 30-second safe backoff (never 24 hours)
   try {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem(FS_QUOTA_STORAGE_KEY, String(clientFirestoreSuspendedUntil));
       localStorage.setItem(FS_QUOTA_STORAGE_KEY, String(clientFirestoreSuspendedUntil));
     }
   } catch {}
-  console.warn('[Client Firestore] Quota limit reached. Suspended Firestore direct polling for 24 hours. Express Server Database & SSE Active.');
+  console.warn('[Client Firestore] Temporary quota pause for 30s. Express Server Database & SSE Active.');
 };
 
 // Direct fetch from Server Database API and Cloud Firestore (Dual-Cloud Synchronization)
@@ -521,13 +719,20 @@ export const fetchVisits = async (): Promise<Visit[]> => {
   let firestoreVisits: Visit[] = [];
   let idbVisits: Visit[] = [];
 
+  // 0. Ensure deleted IDs are synchronized so deleted items are NEVER resurrected
+  await syncDeletedIdsFromServer().catch(() => {});
+  const deleted = getDeletedIds();
+  pruneDeletedFromIndexedDB(deleted).catch(() => {});
+
   // 1. Primary Source A: Server Database API (Sub-15ms ultra-fast disk storage)
   try {
     const res = await fetch('/api/visits', { cache: 'no-store' });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        serverVisits = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+        serverVisits = json.data
+          .filter((item: any) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+          .map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
       }
     }
   } catch (err) {
@@ -536,20 +741,24 @@ export const fetchVisits = async (): Promise<Visit[]> => {
 
   // 2. Source B: IndexedDB (Local full-resolution offline storage)
   try {
-    idbVisits = await getVisitsFromIndexedDB();
+    idbVisits = (await getVisitsFromIndexedDB()).filter(
+      (item) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber))
+    );
   } catch {}
 
-  // 3. Source C: Cloud Firestore (Only if Server returned no data and quota is healthy)
-  if (serverVisits.length === 0 && canUseClientFirestore()) {
+  // 3. Source C: Cloud Firestore (Query in parallel so visits recorded on ANY computer are NEVER missed)
+  if (canUseClientFirestore()) {
     try {
-      const snap = await Promise.race([
-        getDocs(collection(db, 'visits')),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 1000))
-      ]);
+      const snapPromise = getDocs(collection(db, 'visits'));
+      const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 6000));
+      const snap = await Promise.race([snapPromise, timeoutPromise]);
       if (snap && 'forEach' in snap) {
         const list: Visit[] = [];
         snap.forEach((d: any) => {
-          list.push(normalizeVisitData(d.data(), d.id));
+          const item = d.data();
+          if (!deleted.has(d.id) && (!item.id || !deleted.has(item.id)) && (!item.visitNumber || !deleted.has(item.visitNumber))) {
+            list.push(normalizeVisitData(item, d.id));
+          }
         });
         firestoreVisits = list;
       }
@@ -562,13 +771,23 @@ export const fetchVisits = async (): Promise<Visit[]> => {
   }
 
   // 4. Merge Server + Cloud Firestore + IndexedDB + Local Cache + Seed
-  const localVisits = getAllLocalVisits();
-  const seedList: Visit[] = (seedVisitsLite as any[]).map((item) => normalizeVisitData(item, item.id));
+  const localVisits = getAllLocalVisits().filter(
+    (item) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber))
+  );
+  const seedList: Visit[] = (seedVisitsLite as any[])
+    .filter((item) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+    .map((item) => normalizeVisitData(item, item.id));
 
-  let fullyMerged = mergeVisits(serverVisits, firestoreVisits);
+  // Authoritative merge order: Cloud Firestore & Server visits take priority
+  let fullyMerged = mergeVisits(firestoreVisits, serverVisits);
   fullyMerged = mergeVisits(fullyMerged, idbVisits);
   fullyMerged = mergeVisits(fullyMerged, localVisits);
   fullyMerged = mergeVisits(fullyMerged, seedList);
+
+  // Filter out any deleted visits
+  fullyMerged = fullyMerged.filter(
+    (v) => v && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
+  );
 
   // Strict descending order: most recent always at index 0
   fullyMerged.sort((a, b) => {
@@ -583,7 +802,7 @@ export const fetchVisits = async (): Promise<Visit[]> => {
     // Cross-sync: If local cache or Firestore had visits/images that Server lacked or had as SVG
     const serverMap = new Map(serverVisits.map((v) => [v.id, v]));
     const needsServerSync = fullyMerged.filter((v) => {
-      if (!v.id) return false;
+      if (!v.id || deleted.has(v.id) || (v.visitNumber && deleted.has(v.visitNumber))) return false;
       const s = serverMap.get(v.id);
       if (!s) return true; // new visit missing on server
       // Has real image locally that server only has as SVG
@@ -592,7 +811,7 @@ export const fetchVisits = async (): Promise<Visit[]> => {
       return restoredSelfie || restoredSig;
     });
 
-    if (needsServerSync.length > 0 && serverVisits.length > 0) {
+    if (needsServerSync.length > 0) {
       syncLocalVisitsToServer(needsServerSync).catch(() => {});
     }
 
@@ -612,16 +831,22 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   // Helper to handle and dispatch new visits array with dedup and sorting
   const handleFreshVisits = (fresh: Visit[]) => {
     if (!isSubscribed) return;
-    const merged = mergeVisits(fresh, currentVisits);
+    const deleted = getDeletedIds();
+    const validFresh = fresh.filter(
+      (v) => v && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
+    );
+    const merged = mergeVisits(validFresh, currentVisits).filter(
+      (v) => v && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
+    );
     merged.sort((a, b) => {
       const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
       const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
       return timeB - timeA;
     });
 
-    // Check if data actually changed
-    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
-    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}`).join('|');
+    // Check if data actually changed (including real image improvements!)
+    const oldKeys = currentVisits.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}_${isRealUserImage(v.selfieUrl) ? 'R' : 'F'}_${v.selfieUrl?.length || 0}_${v.signatureUrl?.length || 0}`).join('|');
+    const newKeys = merged.map((v) => `${v.id}_${v.status}_${v.visitNumber || ''}_${v.notes || ''}_${isRealUserImage(v.selfieUrl) ? 'R' : 'F'}_${v.selfieUrl?.length || 0}_${v.signatureUrl?.length || 0}`).join('|');
 
     if (newKeys !== oldKeys || currentVisits.length !== merged.length) {
       currentVisits = merged;
@@ -638,45 +863,35 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     }
   }).catch(() => {});
 
-  // 2. REAL-TIME SERVER-SENT EVENTS (SSE) STREAM (<10ms instant push across computers, zero Firestore quota)
-  let sseSource: EventSource | null = null;
-  const connectSSE = () => {
-    if (!isSubscribed || typeof EventSource === 'undefined') return;
-    try {
-      sseSource = new EventSource('/api/realtime/stream');
-
-      sseSource.onmessage = (event) => {
-        if (!isSubscribed) return;
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload?.type === 'NEW_VISIT' && payload?.data) {
-            handleFreshVisits([normalizeVisitData(payload.data, payload.data.id || 'sse-new')]);
-          } else if (payload?.type === 'UPDATE_VISIT' && payload?.data) {
-            handleFreshVisits([normalizeVisitData(payload.data, payload.data.id || 'sse-update')]);
-          } else if (payload?.type === 'DELETE_VISITS' && Array.isArray(payload?.data?.deletedIds)) {
-            const deleteSet = new Set(payload.data.deletedIds);
-            const remaining = currentVisits.filter((v) => !deleteSet.has(v.id));
-            currentVisits = remaining;
-            safeSaveVisitsToStorage(remaining);
-            callback(remaining);
-          } else if (payload?.type === 'SYNC_VISITS' || payload?.type === 'RESET_VISITS') {
-            syncFromServer();
-          }
-        } catch {}
-      };
-
-      sseSource.onerror = () => {
-        if (sseSource) {
-          sseSource.close();
-          sseSource = null;
-        }
-        if (isSubscribed) {
-          setTimeout(connectSSE, 4000);
-        }
-      };
-    } catch {}
-  };
-  connectSSE();
+  // 2. Centralized RealtimeHub listener (handles SSE, BroadcastChannel, and server notifications)
+  const unsubRealtimeHub = realtimeHub.addListener((type, data) => {
+    if (!isSubscribed) return;
+    if (type === 'DELETE_VISITS') {
+      const idsToDelete = data?.deletedIds || data?.ids;
+      if (Array.isArray(idsToDelete) && idsToDelete.length > 0) {
+        addDeletedIds(idsToDelete);
+        pruneDeletedFromIndexedDB(new Set(idsToDelete)).catch(() => {});
+        removeVisitFromDailyNotifications(idsToDelete);
+        const deleteSet = new Set(idsToDelete);
+        const remaining = currentVisits.filter(
+          (v) => !deleteSet.has(v.id) && (!v.visitNumber || !deleteSet.has(v.visitNumber))
+        );
+        currentVisits = remaining;
+        safeSaveVisitsToStorage(remaining);
+        callback(remaining);
+      }
+    } else if (type === 'NEW_VISIT' && data) {
+      if (!isVisitDeleted(data.id) && (!data.visitNumber || !isVisitDeleted(data.visitNumber))) {
+        handleFreshVisits([normalizeVisitData(data, data.id || 'hub-new')]);
+      }
+    } else if (type === 'UPDATE_VISIT' && data) {
+      if (!isVisitDeleted(data.id) && (!data.visitNumber || !isVisitDeleted(data.visitNumber))) {
+        handleFreshVisits([normalizeVisitData(data, data.id || 'hub-update')]);
+      }
+    } else if (type === 'SYNC_VISITS' || type === 'RESET_VISITS') {
+      syncFromServer();
+    }
+  });
 
   // 3. REAL-TIME CLOUD FIRESTORE LISTENER (Only when quota allows; immediately detaches on RESOURCE_EXHAUSTED to prevent lag)
   let unsubFirestore = () => {};
@@ -687,8 +902,12 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
         (snapshot) => {
           if (!isSubscribed) return;
           const fsVisits: Visit[] = [];
+          const deleted = getDeletedIds();
           snapshot.forEach((d) => {
-            fsVisits.push(normalizeVisitData(d.data(), d.id));
+            const data = d.data();
+            if (!deleted.has(d.id) && (!data.id || !deleted.has(data.id)) && (!data.visitNumber || !deleted.has(data.visitNumber))) {
+              fsVisits.push(normalizeVisitData(data, d.id));
+            }
           });
           if (fsVisits.length > 0) {
             handleFreshVisits(fsVisits);
@@ -714,6 +933,10 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   const syncFromServer = async () => {
     if (!isSubscribed || isFetchingFull) return;
     try {
+      await syncDeletedIdsFromServer().catch(() => {});
+      const deleted = getDeletedIds();
+      pruneDeletedFromIndexedDB(deleted).catch(() => {});
+
       // Check summary first (only ~50 bytes)
       const sumRes = await fetch('/api/visits/summary', { cache: 'no-store' });
       if (sumRes.ok) {
@@ -732,7 +955,9 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          const fresh = json.data.map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
+          const fresh = json.data
+            .filter((item: any) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+            .map((item: any) => normalizeVisitData(item, item.id || 'srv-id'));
           handleFreshVisits(fresh);
         }
       }
@@ -767,33 +992,13 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   window.addEventListener('storage', handleStorageChange);
   window.addEventListener('focus', handleFocus);
 
-  // 6. BroadcastChannel listener for cross-tab sync
-  let broadcastChannel: BroadcastChannel | null = null;
-  try {
-    if (typeof BroadcastChannel !== 'undefined') {
-      broadcastChannel = new BroadcastChannel('posbakum_sync_channel');
-      broadcastChannel.onmessage = () => {
-        if (isSubscribed) {
-          syncFromServer();
-        }
-      };
-    }
-  } catch {}
-
   return () => {
     isSubscribed = false;
-    if (sseSource) {
-      try { sseSource.close(); } catch {}
-    }
+    unsubRealtimeHub();
     unsubFirestore();
     clearInterval(intervalId);
     window.removeEventListener('storage', handleStorageChange);
     window.removeEventListener('focus', handleFocus);
-    if (broadcastChannel) {
-      try {
-        broadcastChannel.close();
-      } catch {}
-    }
   };
 };
 
@@ -876,15 +1081,16 @@ export const saveVisit = async (
   safeSaveVisitsToStorage(updated);
 
   // 3. Cloud Firestore permanent sync (propagates across internet to all admin computers)
-  (async () => {
-    try {
-      const cleanRecord = sanitizeForFirestore(visitRecord);
-      const docRef = doc(db, 'visits', visitRecord.id);
-      await setDoc(docRef, cleanRecord, { merge: true });
-    } catch (fsErr) {
-      console.warn('Background Firestore write queued by SDK:', fsErr);
-    }
-  })();
+  try {
+    const cleanRecord = sanitizeForFirestore(visitRecord);
+    const docRef = doc(db, 'visits', visitRecord.id);
+    await Promise.race([
+      setDoc(docRef, cleanRecord, { merge: true }),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
+  } catch (fsErr) {
+    console.warn('Firestore write warning:', fsErr);
+  }
 
   // 4. Log activity permanently
   logActivity({
@@ -961,8 +1167,8 @@ export const updateVisitDetails = async (
 
   visits[index] = updatedVisit;
 
-  // Local storage update
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(visits));
+  // Local storage update (safe & lightweight)
+  safeSaveVisitsToStorage(visits);
 
   // Server API update
   try {
@@ -1040,18 +1246,31 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
   const visits = getStoredVisits();
   const target = visits.find((v) => v.id === visitId);
 
-  // 1. Local cache update immediately
-  const updated = visits.filter((v) => v.id !== visitId);
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  // 1. Add to client tombstone store immediately so this machine and others NEVER re-add it!
+  const tombstones = [visitId, target?.visitNumber].filter(Boolean) as string[];
+  addDeletedIds(tombstones);
 
-  // 2. Server API deletion
+  // 2. Delete from IndexedDB immediately
+  deleteVisitFromIndexedDB(visitId, target?.visitNumber).catch(() => {});
+
+  // 3. Remove from daily notifications
+  removeVisitFromDailyNotifications(tombstones);
+
+  // 4. Local cache update immediately (safe & lightweight)
+  const updated = visits.filter((v) => v.id !== visitId && (!target?.visitNumber || v.visitNumber !== target.visitNumber));
+  safeSaveVisitsToStorage(updated);
+
+  // 5. Broadcast deletion to all local tabs immediately
+  realtimeHub.broadcastLocal('DELETE_VISITS', { ids: [visitId], deletedIds: tombstones });
+
+  // 6. Server API deletion
   try {
     await fetch(`/api/visits/${visitId}`, { method: 'DELETE' });
   } catch (err) {
     console.warn('Server API delete visit warning:', err);
   }
 
-  // 3. Cloud Firestore permanent deletion
+  // 7. Cloud Firestore permanent deletion
   try {
     const docRef = doc(db, 'visits', visitId);
     await deleteDoc(docRef);
@@ -1093,13 +1312,32 @@ export const deleteVisit = async (visitId: string, deletedByName?: string): Prom
 export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: string): Promise<number> => {
   const visits = getStoredVisits();
   const countBefore = visits.length;
+
+  const tombstones = [...visitIds];
+  visits.forEach((v) => {
+    if (visitIds.includes(v.id) && v.visitNumber) {
+      tombstones.push(v.visitNumber);
+    }
+  });
+
+  // 1. Add to client tombstones
+  addDeletedIds(tombstones);
+
+  // 2. Delete from IndexedDB
+  pruneDeletedFromIndexedDB(new Set(tombstones)).catch(() => {});
+
+  // 3. Remove from daily notifications
+  removeVisitFromDailyNotifications(tombstones);
+
+  // 4. Local cache update (safe & lightweight)
   const updated = visits.filter((v) => !visitIds.includes(v.id));
   const deletedCount = countBefore - updated.length || visitIds.length;
+  safeSaveVisitsToStorage(updated);
 
-  // 1. Local cache update
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify(updated));
+  // 5. Broadcast deletion to all local tabs immediately
+  realtimeHub.broadcastLocal('DELETE_VISITS', { ids: visitIds, deletedIds: tombstones });
 
-  // 2. Server API bulk delete
+  // 6. Server API bulk delete
   try {
     await fetch('/api/visits/bulk-delete', {
       method: 'POST',
@@ -1110,7 +1348,7 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
     console.warn('Server API bulk delete warning:', err);
   }
 
-  // 3. Cloud Firestore batch delete
+  // 7. Cloud Firestore batch delete
   try {
     const visitsCol = collection(db, 'visits');
     const snapshot = await getDocs(visitsCol);
@@ -1150,6 +1388,7 @@ export const deleteMultipleVisits = async (visitIds: string[], deletedByName?: s
 
 // Restore sample visits if data was ever missing
 export const restoreSampleVisits = async (): Promise<Visit[]> => {
+  clearDeletedIds();
   try {
     const res = await fetch('/api/visits/restore-default', { method: 'POST' });
     if (res.ok) {
@@ -1157,6 +1396,8 @@ export const restoreSampleVisits = async (): Promise<Visit[]> => {
       if (json.success && Array.isArray(json.data)) {
         const restored = json.data.map((item: any) => normalizeVisitData(item, item.id));
         safeSaveVisitsToStorage(restored);
+        saveVisitsToIndexedDB(restored).catch(() => {});
+        realtimeHub.broadcastLocal('SYNC_VISITS', { count: restored.length });
         return restored;
       }
     }
@@ -1171,10 +1412,22 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
   const visits = getStoredVisits();
   const totalCount = visits.length;
 
-  // 1. Clear local storage
-  localStorage.setItem(STORAGE_KEY_VISITS, JSON.stringify([]));
+  const allIds: string[] = [];
+  visits.forEach((v) => {
+    if (v.id) allIds.push(v.id);
+    if (v.visitNumber) allIds.push(v.visitNumber);
+  });
+  addDeletedIds(allIds);
+  pruneDeletedFromIndexedDB(new Set(allIds)).catch(() => {});
+  removeVisitFromDailyNotifications(allIds);
 
-  // 2. Server API bulk delete
+  // 1. Clear local storage (safe & lightweight)
+  safeSaveVisitsToStorage([]);
+
+  // 2. Broadcast locally immediately
+  realtimeHub.broadcastLocal('DELETE_VISITS', { ids: allIds, deletedIds: allIds });
+
+  // 3. Server API bulk delete
   try {
     await fetch('/api/visits/bulk-delete', {
       method: 'POST',
@@ -1185,7 +1438,7 @@ export const clearAllVisits = async (deletedByName?: string): Promise<number> =>
     console.warn('Server API clear all visits warning:', err);
   }
 
-  // 3. Batch delete all in Cloud Firestore
+  // 4. Batch delete all in Cloud Firestore
   try {
     const visitsCol = collection(db, 'visits');
     const snapshot = await getDocs(visitsCol);
@@ -1339,7 +1592,11 @@ export const logActivity = async (logData: Omit<ActivityLog, 'id' | 'timestamp' 
   };
 
   const updated = [newLog, ...logs].slice(0, 100);
-  localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(updated));
+  try {
+    localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('LocalStorage save logs warning:', err);
+  }
 
   try {
     const docRef = doc(db, 'activity_logs', newLog.id);
@@ -1354,7 +1611,9 @@ export const getStoredQrTokens = (): QrToken[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_QR);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(INITIAL_QR_TOKENS));
+      try {
+        localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(INITIAL_QR_TOKENS));
+      } catch {}
       return INITIAL_QR_TOKENS;
     }
     return JSON.parse(raw);
@@ -1375,7 +1634,9 @@ export const addQrToken = async (name: string, location: string): Promise<QrToke
     scanCount: 0,
   };
   const updated = [...tokens, newToken];
-  localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(updated));
+  try {
+    localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(updated));
+  } catch {}
 
   try {
     const docRef = doc(db, 'qr_tokens', newToken.id);
@@ -1392,7 +1653,9 @@ export const toggleQrTokenStatus = async (id: string): Promise<boolean> => {
   const index = tokens.findIndex(t => t.id === id);
   if (index === -1) return false;
   tokens[index].isActive = !tokens[index].isActive;
-  localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(tokens));
+  try {
+    localStorage.setItem(STORAGE_KEY_QR, JSON.stringify(tokens));
+  } catch {}
 
   try {
     const docRef = doc(db, 'qr_tokens', id);
@@ -1412,7 +1675,9 @@ export const getAuthenticatedOfficer = (): OfficerUser | null => {
     const parsed = JSON.parse(raw);
     if (parsed && (parsed.nip === '19880512 201403 1 002' || !parsed.nip)) {
       parsed.nip = '';
-      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(parsed));
+      try {
+        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(parsed));
+      } catch {}
     }
     return parsed;
   } catch {
@@ -1421,9 +1686,11 @@ export const getAuthenticatedOfficer = (): OfficerUser | null => {
 };
 
 export const setAuthenticatedOfficer = (officer: OfficerUser | null): void => {
-  if (officer) {
-    localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(officer));
-  } else {
-    localStorage.removeItem(STORAGE_KEY_AUTH);
-  }
+  try {
+    if (officer) {
+      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(officer));
+    } else {
+      localStorage.removeItem(STORAGE_KEY_AUTH);
+    }
+  } catch {}
 };

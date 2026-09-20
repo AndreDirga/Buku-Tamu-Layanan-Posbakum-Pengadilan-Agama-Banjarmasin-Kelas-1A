@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { initializeApp as initFirebaseApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 const app = express();
 const PORT = 3000;
@@ -20,6 +20,36 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const VISITS_FILE = path.join(DATA_DIR, 'visits.json');
 const LOGS_FILE = path.join(DATA_DIR, 'activity_logs.json');
+const DELETED_VISITS_FILE = path.join(DATA_DIR, 'deleted_visits.json');
+
+// Persistent deleted visits set to permanently prevent deleted visits from resurrecting across syncs
+let deletedIdsCache = new Set<string>();
+
+function readDeletedIdsFromDisk(): Set<string> {
+  try {
+    if (fs.existsSync(DELETED_VISITS_FILE)) {
+      const raw = fs.readFileSync(DELETED_VISITS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter(Boolean));
+      }
+    }
+  } catch (err) {
+    console.error('Error reading deleted visits file:', err);
+  }
+  return new Set();
+}
+
+function saveDeletedIdsToDisk(): void {
+  try {
+    fs.writeFileSync(DELETED_VISITS_FILE, JSON.stringify(Array.from(deletedIdsCache)), 'utf8');
+  } catch (err) {
+    console.error('Error writing deleted visits file:', err);
+  }
+}
+
+// Initialize deleted IDs from disk immediately
+deletedIdsCache = readDeletedIdsFromDisk();
 
 // Default initial visits for Posbakum Pengadilan Agama Banjarmasin
 const DEFAULT_VISITS = [
@@ -186,6 +216,11 @@ function readVisitsFromDisk(): any[] {
       data = JSON.parse(raw);
     }
 
+    // Filter out permanently deleted visits from disk cache
+    if (Array.isArray(data) && deletedIdsCache.size > 0) {
+      data = data.filter((v) => v && v.id && !deletedIdsCache.has(v.id) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber)));
+    }
+
     // Always check seed baseline (125 items)
     const seedFile = path.join(process.cwd(), 'src', 'data', 'seedVisits.json');
     let seedData: any[] = [];
@@ -194,20 +229,33 @@ function readVisitsFromDisk(): any[] {
       seedData = JSON.parse(seedRaw);
     }
 
+    // Filter out permanently deleted visits from seed data
+    if (Array.isArray(seedData) && deletedIdsCache.size > 0) {
+      seedData = seedData.filter((v) => v && v.id && !deletedIdsCache.has(v.id) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber)));
+    }
+
     if (Array.isArray(data) && data.length >= 125) {
       return data;
     }
 
-    // If disk has fewer than 125 records, merge with seed data so 125 visits are always guaranteed
+    // If disk has fewer than 125 records, merge with seed data so baseline visits are guaranteed (excluding deleted items)
     if (Array.isArray(seedData) && seedData.length > 0) {
       const map = new Map<string, any>();
-      seedData.forEach((v) => { if (v && v.id) map.set(v.id, v); });
+      seedData.forEach((v) => {
+        if (v && v.id && !deletedIdsCache.has(v.id) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber))) {
+          map.set(v.id, v);
+        }
+      });
       if (Array.isArray(data)) {
-        data.forEach((v) => { if (v && v.id) map.set(v.id, v); });
+        data.forEach((v) => {
+          if (v && v.id && !deletedIdsCache.has(v.id) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber))) {
+            map.set(v.id, v);
+          }
+        });
       }
       const merged = Array.from(map.values());
       saveVisitsToDisk(merged);
-      console.log(`[Server] Ensured ${merged.length} visits on disk.`);
+      console.log(`[Server] Ensured ${merged.length} visits on disk (excluding deleted).`);
       return merged;
     }
 
@@ -373,6 +421,7 @@ export function broadcastRealtimeEvent(type: string, data: any) {
   for (const client of sseClients) {
     try {
       client.write(message);
+      (client as any).flush?.();
     } catch {
       sseClients.delete(client);
     }
@@ -452,6 +501,9 @@ async function syncServerWithFirestore() {
       const currentMap = new Map<string, any>(visitsCache.map((v) => [v.id, v]));
 
       for (const [id, fsDoc] of fsMap.entries()) {
+        if (deletedIdsCache.has(id) || (fsDoc.visitNumber && deletedIdsCache.has(fsDoc.visitNumber))) {
+          continue;
+        }
         if (!currentMap.has(id)) {
           currentMap.set(id, fsDoc);
           hasChanges = true;
@@ -489,8 +541,87 @@ async function syncServerWithFirestore() {
   }
 }
 
-// Run single safe sync at startup (NO repetitive 15s polling to protect Firestore free tier quota)
+// Live real-time listener for multi-instance & multi-computer Cloud Firestore updates
+let unsubServerFirestore: any = null;
+function setupServerFirestoreListener() {
+  if (!serverFirestoreDb) return;
+  try {
+    if (unsubServerFirestore) {
+      try { unsubServerFirestore(); } catch {}
+    }
+    unsubServerFirestore = onSnapshot(
+      collection(serverFirestoreDb, 'visits'),
+      (snapshot) => {
+        let hasChanges = false;
+        let isFirstRun = snapshot.docChanges().length === snapshot.size;
+        const currentMap = new Map<string, any>(visitsCache.map((v) => [v.id, v]));
+
+        snapshot.docChanges().forEach((change) => {
+          const docData = change.doc.data();
+          const docId = change.doc.id;
+
+          if (change.type === 'added') {
+            if (!currentMap.has(docId)) {
+              currentMap.set(docId, docData);
+              hasChanges = true;
+              if (!isFirstRun) {
+                console.log(`[Server Firestore Realtime] New visit detected from another computer: ${docData.name} (${docData.visitNumber})`);
+                broadcastRealtimeEvent('NEW_VISIT', docData);
+              }
+            } else {
+              // Existing doc: check if image can be improved with real image
+              const localDoc = currentMap.get(docId);
+              const selfie = pickBestImage(docData.selfieUrl, localDoc.selfieUrl);
+              const sig = pickBestImage(docData.signatureUrl, localDoc.signatureUrl);
+              if ((selfie && selfie !== localDoc.selfieUrl) || (sig && sig !== localDoc.signatureUrl)) {
+                currentMap.set(docId, { ...localDoc, ...docData, selfieUrl: selfie, signatureUrl: sig });
+                hasChanges = true;
+              }
+            }
+          } else if (change.type === 'modified') {
+            const localDoc = currentMap.get(docId) || {};
+            const selfie = pickBestImage(docData.selfieUrl, localDoc.selfieUrl);
+            const sig = pickBestImage(docData.signatureUrl, localDoc.signatureUrl);
+            currentMap.set(docId, { ...localDoc, ...docData, selfieUrl: selfie, signatureUrl: sig });
+            hasChanges = true;
+            if (!isFirstRun) {
+              broadcastRealtimeEvent('UPDATE_VISIT', docData);
+            }
+          } else if (change.type === 'removed') {
+            deletedIdsCache.add(docId);
+            saveDeletedIdsToDisk();
+            if (currentMap.has(docId)) {
+              currentMap.delete(docId);
+              hasChanges = true;
+              broadcastRealtimeEvent('DELETE_VISITS', { ids: [docId], deletedIds: [docId] });
+            }
+          }
+        });
+
+        if (hasChanges) {
+          const mergedList = Array.from(currentMap.values());
+          enforceUniqueQueueNumbers(mergedList);
+          mergedList.sort((a, b) => {
+            const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+            const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+            return timeB - timeA;
+          });
+          visitsCache = mergedList;
+          saveVisitsToDisk(visitsCache);
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, 'Server Firestore Realtime Listener');
+      }
+    );
+  } catch (err) {
+    console.warn('[Server Firestore] Failed to setup onSnapshot:', err);
+  }
+}
+
+// Run initial sync and attach real-time multi-computer listener
 syncServerWithFirestore();
+setupServerFirestoreListener();
 
 // ==========================================
 // API ROUTES FIRST (BEFORE VITE MIDDLEWARE)
@@ -554,11 +685,12 @@ app.get('/api/realtime/stream', (req, res) => {
   const pingTimer = setInterval(() => {
     try {
       res.write(': keepalive\n\n');
+      (res as any).flush?.();
     } catch {
       clearInterval(pingTimer);
       sseClients.delete(res);
     }
-  }, 20000);
+  }, 10000);
 
   req.on('close', () => {
     clearInterval(pingTimer);
@@ -598,6 +730,18 @@ app.post('/api/notifications/broadcast', (req, res) => {
   }
 });
 
+// GET list of permanently deleted visit IDs to keep all computers in sync
+app.get('/api/visits/deleted', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.json({
+    success: true,
+    count: deletedIdsCache.size,
+    deletedIds: Array.from(deletedIdsCache),
+  });
+});
+
 // GET lightweight summary of visits for high-speed, zero-bandwidth polling
 app.get('/api/visits/summary', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -610,6 +754,7 @@ app.get('/api/visits/summary', (req, res) => {
     success: true,
     count: visitsCache.length,
     version: visitsVersionTimestamp,
+    deletedCount: deletedIdsCache.size,
   });
 });
 
@@ -675,15 +820,18 @@ app.get('/api/visits/next-number', (req, res) => {
 
 // POST new visit (atomically assigned queue number & instant storage under serialization lock)
 app.post('/api/visits', async (req, res) => {
-  // Enqueue this save request to avoid concurrent race-conditions creating duplicate numbers
-  visitSaveQueue = visitSaveQueue
+  const currentSaveTask = visitSaveQueue
     .catch(() => {})
     .then(async () => {
       try {
-        const newVisit = req.body;
+        const newVisit = req.body?.visit || req.body;
         if (!newVisit || !newVisit.name) {
           return res.status(400).json({ success: false, message: 'Data kunjungan tidak valid.' });
         }
+
+        // If this ID or visitNumber was somehow in deletedIdsCache, clear it
+        if (newVisit.id) deletedIdsCache.delete(newVisit.id);
+        if (newVisit.visitNumber) deletedIdsCache.delete(newVisit.visitNumber);
 
         const { dateStr, todayPrefix, y, m, d, h, min } = getWitaDateInfo(newVisit.visitedAt || Date.now());
 
@@ -744,7 +892,7 @@ app.post('/api/visits', async (req, res) => {
               v.name &&
               newVisit.name &&
               v.name.trim().toLowerCase() === newVisit.name.trim().toLowerCase() &&
-              v.whatsapp === newVisit.whatsapp &&
+              (v.whatsapp === newVisit.whatsapp || v.phone === newVisit.phone) &&
               Math.abs(new Date(v.visitedAt || v.createdAt || 0).getTime() - new Date(newVisit.visitedAt || newVisit.createdAt || 0).getTime()) < 60000
           );
           if (recentDuplicateIndex >= 0) {
@@ -766,6 +914,7 @@ app.post('/api/visits', async (req, res) => {
           return timeB - timeA;
         });
 
+        visitsVersionTimestamp = Date.now();
         saveVisitsToDisk(visitsCache);
 
         // Register notification in server buffer for cross-computer real-time distribution
@@ -781,6 +930,7 @@ app.post('/api/visits', async (req, res) => {
         // Instant SSE broadcast to ALL connected computers (<10ms latency)
         broadcastRealtimeEvent('NEW_VISIT', newVisit);
         broadcastRealtimeEvent('NOTIFICATION', notifItem);
+        broadcastRealtimeEvent('SYNC_VISITS', { totalCount: visitsCache.length, version: visitsVersionTimestamp });
 
         // Asynchronously replicate to Cloud Firestore (non-blocking for quota resilience)
         if (isFirestoreAvailable()) {
@@ -801,6 +951,8 @@ app.post('/api/visits', async (req, res) => {
         return res.status(500).json({ success: false, message: err.message });
       }
     });
+  visitSaveQueue = currentSaveTask;
+  await currentSaveTask;
 });
 
 // POST sync multiple visits (merges client visits from localStorage into server database)
@@ -811,18 +963,30 @@ app.post('/api/visits/sync', (req, res) => {
       return res.status(400).json({ success: false, message: 'Format data sinkronisasi harus array kunjungan.' });
     }
 
-    const map = new Map<string, any>();
-
-    // Put current server visits
-    visitsCache.forEach((v) => {
+    // Strictly filter out any incoming visits that are in deletedIdsCache!
+    const filteredIncoming = incomingVisits.filter((v) => {
+      if (!v) return false;
       const key = v.id || v.visitNumber;
-      if (key) map.set(key, v);
+      if (!key) return false;
+      if (deletedIdsCache.has(key)) return false;
+      if (v.id && deletedIdsCache.has(v.id)) return false;
+      if (v.visitNumber && deletedIdsCache.has(v.visitNumber)) return false;
+      return true;
     });
 
-    // Merge incoming visits
+    const map = new Map<string, any>();
+
+    // Put current server visits (excluding any deleted ones)
+    visitsCache.forEach((v) => {
+      const key = v.id || v.visitNumber;
+      if (key && !deletedIdsCache.has(key) && (!v.id || !deletedIdsCache.has(v.id)) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber))) {
+        map.set(key, v);
+      }
+    });
+
+    // Merge filtered incoming visits
     let addedCount = 0;
-    incomingVisits.forEach((v) => {
-      if (!v) return;
+    filteredIncoming.forEach((v) => {
       const key = v.id || v.visitNumber;
       if (!key) return;
       if (!map.has(key)) {
@@ -911,11 +1075,23 @@ app.put('/api/visits/:id', (req, res) => {
 app.delete('/api/visits/:id', (req, res) => {
   try {
     const visitId = req.params.id;
-    visitsCache = visitsCache.filter((v) => v.id !== visitId);
+
+    // Permanently tombstone this visit ID so it cannot be resurrected by client sync
+    deletedIdsCache.add(visitId);
+    const target = visitsCache.find((v) => v.id === visitId);
+    if (target?.visitNumber) {
+      deletedIdsCache.add(target.visitNumber);
+    }
+    saveDeletedIdsToDisk();
+
+    visitsCache = visitsCache.filter((v) => v.id !== visitId && (!target?.visitNumber || v.visitNumber !== target.visitNumber));
+    visitsVersionTimestamp = Date.now();
     saveVisitsToDisk(visitsCache);
 
+    const tombstones = [visitId, target?.visitNumber].filter(Boolean) as string[];
     // Instant SSE broadcast to ALL connected computers
-    broadcastRealtimeEvent('DELETE_VISITS', { ids: [visitId] });
+    broadcastRealtimeEvent('DELETE_VISITS', { ids: [visitId], deletedIds: tombstones });
+    broadcastRealtimeEvent('SYNC_VISITS', { totalCount: visitsCache.length, version: visitsVersionTimestamp });
 
     // Asynchronously replicate deletion to Cloud Firestore
     if (isFirestoreAvailable()) {
@@ -936,11 +1112,33 @@ app.post('/api/visits/bulk-delete', (req, res) => {
     }
 
     const idSet = new Set(idsToDelete);
+    idsToDelete.forEach((id) => {
+      if (id) deletedIdsCache.add(id);
+    });
+
+    // Also tombstone their visitNumbers if present
+    visitsCache.forEach((v) => {
+      if (idSet.has(v.id) && v.visitNumber) {
+        deletedIdsCache.add(v.visitNumber);
+        idSet.add(v.visitNumber);
+      }
+    });
+    saveDeletedIdsToDisk();
+
     visitsCache = visitsCache.filter((v) => !idSet.has(v.id));
+    visitsVersionTimestamp = Date.now();
     saveVisitsToDisk(visitsCache);
 
     // Instant SSE broadcast to ALL connected computers
-    broadcastRealtimeEvent('DELETE_VISITS', { ids: idsToDelete });
+    broadcastRealtimeEvent('DELETE_VISITS', { ids: idsToDelete, deletedIds: Array.from(idSet) });
+    broadcastRealtimeEvent('SYNC_VISITS', { totalCount: visitsCache.length, version: visitsVersionTimestamp });
+
+    // Replicate to Cloud Firestore
+    if (isFirestoreAvailable()) {
+      idsToDelete.forEach((id) => {
+        deleteDoc(doc(serverFirestoreDb, 'visits', id)).catch(() => {});
+      });
+    }
 
     res.json({ success: true, message: `${idsToDelete.length} data kunjungan berhasil dihapus.`, remaining: visitsCache.length });
   } catch (err: any) {
@@ -951,6 +1149,8 @@ app.post('/api/visits/bulk-delete', (req, res) => {
 // POST restore default demo visits
 app.post('/api/visits/restore-default', (req, res) => {
   try {
+    deletedIdsCache.clear();
+    saveDeletedIdsToDisk();
     visitsCache = [...DEFAULT_VISITS];
     saveVisitsToDisk(visitsCache);
     broadcastRealtimeEvent('RESET_VISITS', { count: visitsCache.length });

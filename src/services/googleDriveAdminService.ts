@@ -107,7 +107,9 @@ export const connectAdminGoogleDrive = async (): Promise<GDriveAuthInfo | null> 
       accessToken: credential.accessToken,
     };
 
-    localStorage.setItem(GDRIVE_STORAGE_KEYS.AUTH_INFO, JSON.stringify(authInfo));
+    try {
+      localStorage.setItem(GDRIVE_STORAGE_KEYS.AUTH_INFO, JSON.stringify(authInfo));
+    } catch {}
 
     logActivity({
       userId: 'officer-admin',
@@ -380,7 +382,9 @@ export const syncDailyVisitsToGDrive = async (
 
     const allRecords = getAllDailySyncRecords();
     allRecords[dateStr] = newRecord;
-    localStorage.setItem(GDRIVE_STORAGE_KEYS.DAILY_RECORDS, JSON.stringify(allRecords));
+    try {
+      localStorage.setItem(GDRIVE_STORAGE_KEYS.DAILY_RECORDS, JSON.stringify(allRecords));
+    } catch {}
 
     if (manualTrigger) {
       logActivity({
