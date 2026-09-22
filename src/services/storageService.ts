@@ -1,6 +1,12 @@
 import { Visit, ActivityLog, QrToken, OfficerUser, CASE_CATEGORIES } from '../types/posbakum';
 import { db } from './firebase';
-import { broadcastNewVisit, subscribeToNewVisits, addVisitToDailyNotifications, removeVisitFromDailyNotifications } from './notificationService';
+import { 
+  broadcastNewVisit, 
+  subscribeToNewVisits, 
+  addVisitToDailyNotifications, 
+  removeVisitFromDailyNotifications,
+  updateVisitInDailyNotifications
+} from './notificationService';
 import { realtimeHub } from './realtimeHub';
 import { compressImageToTargetKb, getDataUrlSizeKb } from '../utils/imageCompressor';
 import { getWitaDateParts } from '../utils/dateUtils';
@@ -672,9 +678,20 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
       if (existingKey !== v.id) {
         map.delete(existingKey);
       }
+      const vTime = new Date(v.updatedAt || v.visitedAt || 0).getTime();
+      const exTime = new Date(existing.updatedAt || existing.visitedAt || 0).getTime();
+      const preferV = (v.status === 'Selesai' && existing.status !== 'Selesai') || (vTime >= exTime);
+
       map.set(v.id, {
         ...existing,
         ...v,
+        status: preferV ? (v.status || existing.status) : (existing.status || v.status),
+        notes: preferV && v.notes !== undefined ? v.notes : (existing.notes !== undefined ? existing.notes : v.notes),
+        caseCategory: preferV && v.caseCategory ? v.caseCategory : (existing.caseCategory || v.caseCategory),
+        caseType: preferV && v.caseType ? v.caseType : (existing.caseType || v.caseType),
+        caseTypeOther: preferV && v.caseTypeOther !== undefined ? v.caseTypeOther : (existing.caseTypeOther !== undefined ? existing.caseTypeOther : v.caseTypeOther),
+        officerName: preferV && v.officerName ? v.officerName : (existing.officerName || v.officerName),
+        updatedAt: preferV && v.updatedAt ? v.updatedAt : (existing.updatedAt || v.updatedAt),
         visitNumber: v.visitNumber || existing.visitNumber,
         selfieUrl: getBestImageDataUrl(v.selfieUrl, existing.selfieUrl),
         signatureUrl: getBestImageDataUrl(v.signatureUrl, existing.signatureUrl),
@@ -752,10 +769,21 @@ export const reconcileWithAuthoritativeList = (authoritativeVisits: Visit[], loc
     }
 
     if (matchedId) {
-      // Enrich authoritative record with high-res photo/signature stored on this machine
+      // Enrich authoritative record with high-res photo/signature AND preserve recent admin updates (status, notes, etc.)
       const auth = map.get(matchedId)!;
+      const locTime = new Date(loc.updatedAt || loc.visitedAt || 0).getTime();
+      const authTime = new Date(auth.updatedAt || auth.visitedAt || 0).getTime();
+      const preferLocal = (loc.status === 'Selesai' && auth.status !== 'Selesai') || (locTime > authTime);
+
       map.set(matchedId, {
         ...auth,
+        status: preferLocal ? (loc.status || auth.status) : auth.status,
+        notes: preferLocal && loc.notes !== undefined ? loc.notes : (auth.notes || loc.notes),
+        caseCategory: preferLocal && loc.caseCategory ? loc.caseCategory : (auth.caseCategory || loc.caseCategory),
+        caseType: preferLocal && loc.caseType ? loc.caseType : (auth.caseType || loc.caseType),
+        caseTypeOther: preferLocal && loc.caseTypeOther !== undefined ? loc.caseTypeOther : (auth.caseTypeOther !== undefined ? auth.caseTypeOther : loc.caseTypeOther),
+        officerName: preferLocal && loc.officerName ? loc.officerName : (auth.officerName || loc.officerName),
+        updatedAt: preferLocal && loc.updatedAt ? loc.updatedAt : auth.updatedAt,
         selfieUrl: getBestImageDataUrl(auth.selfieUrl, loc.selfieUrl),
         signatureUrl: getBestImageDataUrl(auth.signatureUrl, loc.signatureUrl),
       });
@@ -1275,8 +1303,15 @@ export const updateVisitDetails = async (
   officerName?: string
 ): Promise<Visit | null> => {
   const visits = getStoredVisits();
-  const index = visits.findIndex((v) => v.id === visitId);
-  if (index === -1) return null;
+  let index = visits.findIndex((v) => v.id === visitId || (v.visitNumber && v.visitNumber === visitId));
+  if (index === -1) {
+    const clean = (visitId || '').trim();
+    index = visits.findIndex((v) => (v.id && v.id.trim() === clean) || (v.visitNumber && v.visitNumber.trim() === clean));
+  }
+  if (index === -1) {
+    console.warn(`[updateVisitDetails] Could not find visit for id ${visitId}`);
+    return null;
+  }
 
   const prev = visits[index];
   const nowIso = new Date().toISOString();
@@ -1309,12 +1344,25 @@ export const updateVisitDetails = async (
 
   visits[index] = updatedVisit;
 
-  // Local storage update (safe & lightweight)
+  // 1. Local storage update (safe & lightweight)
   safeSaveVisitsToStorage(visits);
 
-  // Server API update
+  // 2. Overwrite IndexedDB so offline / reloads immediately see new status
+  saveVisitsToIndexedDB(visits).catch(() => {});
+
+  // 3. Update notification history store so badge and popups dismiss immediately
   try {
-    await fetch(`/api/visits/${visitId}`, {
+    updateVisitInDailyNotifications(updatedVisit);
+  } catch {}
+
+  // 4. Real-time broadcast to all local tabs and windows
+  try {
+    realtimeHub.broadcastLocal('UPDATE_VISIT', updatedVisit);
+  } catch {}
+
+  // 5. Server API update
+  try {
+    await fetch(`/api/visits/${encodeURIComponent(updatedVisit.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedVisit),
@@ -1323,9 +1371,9 @@ export const updateVisitDetails = async (
     console.warn('Server API update visit warning:', err);
   }
 
-  // Cloud Firestore permanent update
+  // 6. Cloud Firestore permanent update
   try {
-    const docRef = doc(db, 'visits', visitId);
+    const docRef = doc(db, 'visits', updatedVisit.id);
     const payload: Partial<Visit> = {
       updatedAt: nowIso,
     };

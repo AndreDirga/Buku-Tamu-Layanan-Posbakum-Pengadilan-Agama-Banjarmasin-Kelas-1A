@@ -338,6 +338,14 @@ export default function App() {
               onClose={() => setSelectedVisitForModal(null)}
               onVisitUpdated={(updated) => {
                 setSelectedVisitForModal(updated);
+                // Immediately update React state so Dashboard and Table reflect change instantly
+                setVisits((prev) =>
+                  prev.map((v) =>
+                    v.id === updated.id || (v.visitNumber && v.visitNumber === updated.visitNumber)
+                      ? updated
+                      : v
+                  )
+                );
                 refreshVisits();
               }}
               onDeleteVisit={handleDeleteVisit}

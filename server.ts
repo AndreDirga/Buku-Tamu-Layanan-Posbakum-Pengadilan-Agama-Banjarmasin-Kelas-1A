@@ -276,6 +276,16 @@ function saveVisitsToDisk(visits: any[]): void {
   try {
     fs.writeFileSync(VISITS_FILE, JSON.stringify(visits, null, 2), 'utf8');
     visitsVersionTimestamp = Date.now();
+
+    // Also sync to seed files so client fallbacks never revert newly completed statuses
+    const SEED_FILE = path.join(process.cwd(), 'src', 'data', 'seedVisits.json');
+    const SEED_LITE_FILE = path.join(process.cwd(), 'src', 'data', 'seedVisitsLite.json');
+    if (fs.existsSync(SEED_FILE)) {
+      try { fs.writeFileSync(SEED_FILE, JSON.stringify(visits, null, 2), 'utf8'); } catch {}
+    }
+    if (fs.existsSync(SEED_LITE_FILE)) {
+      try { fs.writeFileSync(SEED_LITE_FILE, JSON.stringify(visits, null, 2), 'utf8'); } catch {}
+    }
   } catch (err) {
     console.error('Error writing visits file:', err);
   }
@@ -1035,8 +1045,21 @@ app.post('/api/visits/sync', (req, res) => {
 app.put('/api/visits/:id', (req, res) => {
   try {
     const visitId = req.params.id;
-    const updates = req.body;
-    const index = visitsCache.findIndex((v) => v.id === visitId);
+    const updates = req.body || {};
+    let index = visitsCache.findIndex((v) => v.id === visitId);
+    if (index === -1) {
+      index = visitsCache.findIndex((v) => v.visitNumber === visitId);
+    }
+    if (index === -1 && updates.id) {
+      index = visitsCache.findIndex((v) => v.id === updates.id);
+    }
+    if (index === -1 && updates.visitNumber) {
+      index = visitsCache.findIndex((v) => v.visitNumber === updates.visitNumber);
+    }
+    if (index === -1 && updates.name) {
+      const uName = updates.name.trim().toLowerCase();
+      index = visitsCache.findIndex((v) => v.name && v.name.trim().toLowerCase() === uName);
+    }
 
     if (index === -1) {
       return res.status(404).json({ success: false, message: 'Data kunjungan tidak ditemukan.' });
@@ -1055,7 +1078,7 @@ app.put('/api/visits/:id', (req, res) => {
 
     // Asynchronously replicate update to Cloud Firestore
     if (isFirestoreAvailable()) {
-      setDoc(doc(serverFirestoreDb, 'visits', visitId), visitsCache[index], { merge: true }).catch((fsErr: any) => {
+      setDoc(doc(serverFirestoreDb, 'visits', visitsCache[index].id), visitsCache[index], { merge: true }).catch((fsErr: any) => {
         handleFirestoreError(fsErr, 'Update Visit');
       });
     }

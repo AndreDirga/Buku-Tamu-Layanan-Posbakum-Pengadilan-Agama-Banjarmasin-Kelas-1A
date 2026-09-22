@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Visit, CASE_CATEGORIES } from '../../types/posbakum';
 import { CourtEmblem } from '../common/CourtEmblem';
 import { SafeVisitImage } from '../common/SafeVisitImage';
@@ -56,6 +56,17 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
   const [selectedCaseCategoryName, setSelectedCaseCategoryName] = useState(visit.caseCategory || CASE_CATEGORIES[0].name);
   const [selectedCaseType, setSelectedCaseType] = useState(visit.caseType || '');
   const [selectedCaseTypeOther, setSelectedCaseTypeOther] = useState(visit.caseTypeOther || '');
+
+  // Keep modal state in sync whenever visit prop is updated
+  useEffect(() => {
+    setStatus(visit.status);
+    setNotes(visit.notes || '');
+    const found = CASE_CATEGORIES.find(c => c.name === visit.caseCategory);
+    if (found) setSelectedCategoryId(found.id);
+    setSelectedCaseCategoryName(visit.caseCategory || CASE_CATEGORIES[0].name);
+    setSelectedCaseType(visit.caseType || '');
+    setSelectedCaseTypeOther(visit.caseTypeOther || '');
+  }, [visit]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -155,13 +166,14 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
     }
   };
 
-  const handleSaveStatus = async () => {
+  const handleSaveStatus = async (overrideStatus?: Visit['status']) => {
     setIsSaving(true);
+    const targetStatus = overrideStatus || status;
     try {
       const updated = await updateVisitDetails(
         visit.id,
         {
-          status,
+          status: targetStatus,
           notes,
           caseCategory: selectedCaseCategoryName,
           caseType: selectedCaseType,
@@ -170,13 +182,14 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
         'Admin'
       );
       if (updated) {
+        setStatus(targetStatus);
         onVisitUpdated(updated);
         setIsEditingCase(false);
         setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 2000);
+        setTimeout(() => setSaveSuccess(false), 2500);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Error updating visit status:', e);
     } finally {
       setIsSaving(false);
     }
@@ -263,24 +276,58 @@ export const VisitDetailModal: React.FC<VisitDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Status Selector */}
-            <div className="flex items-center gap-1.5">
+            {/* Status Selector & Quick Action Pills */}
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] font-bold text-slate-700">Status:</span>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as Visit['status'])}
-                className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border transition ${
-                  status === 'Selesai'
-                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                    : status === 'Sedang Dilayani'
-                    ? 'bg-amber-100 text-amber-900 border-amber-300'
-                    : 'bg-slate-100 text-slate-800 border-slate-300'
-                }`}
-              >
-                <option value="Menunggu">Menunggu</option>
-                <option value="Sedang Dilayani">Sedang Dilayani</option>
-                <option value="Selesai">Selesai</option>
-              </select>
+              
+              <div className="inline-flex rounded-lg p-0.5 bg-slate-200/80 border border-slate-300">
+                <button
+                  type="button"
+                  onClick={() => setStatus('Menunggu')}
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition ${
+                    status === 'Menunggu'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Menunggu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatus('Sedang Dilayani')}
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition ${
+                    status === 'Sedang Dilayani'
+                      ? 'bg-amber-500 text-white shadow-xs'
+                      : 'text-amber-800 hover:text-amber-950'
+                  }`}
+                >
+                  Sedang Dilayani
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatus('Selesai')}
+                  className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 ${
+                    status === 'Selesai'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-emerald-800 hover:text-emerald-950'
+                  }`}
+                >
+                  <span>✓ Selesai</span>
+                </button>
+              </div>
+
+              {status !== 'Selesai' && (
+                <button
+                  type="button"
+                  onClick={() => handleSaveStatus('Selesai')}
+                  disabled={isSaving}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg shadow-xs transition flex items-center gap-1"
+                  title="Klik untuk langsung selesaikan dan simpan status ini ke server"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  <span>Selesaikan & Simpan</span>
+                </button>
+              )}
             </div>
           </div>
 

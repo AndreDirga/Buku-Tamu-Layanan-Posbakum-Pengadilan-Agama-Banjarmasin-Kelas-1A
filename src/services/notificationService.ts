@@ -394,6 +394,41 @@ export const addVisitToDailyNotifications = (visit: Visit): { visits: Visit[]; r
   return { visits: updatedVisits, readVisitIds: updatedReadIds, unreadCount };
 };
 
+// Update an existing visit in today's notification history (e.g. status changes to 'Selesai')
+export const updateVisitInDailyNotifications = (updatedVisit: Visit): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
+  const current = getDailyNotificationStore();
+  const index = current.visits.findIndex((v) => v.id === updatedVisit.id || (v.visitNumber && v.visitNumber === updatedVisit.visitNumber));
+  
+  // If status is no longer Menunggu, ensure it's marked as handled/read
+  if (updatedVisit.status && updatedVisit.status !== 'Menunggu') {
+    markPopupAsHandled(updatedVisit);
+  }
+
+  let updatedVisits = current.visits;
+  let updatedReadIds = current.readVisitIds;
+
+  if (index !== -1) {
+    updatedVisits = [...current.visits];
+    updatedVisits[index] = { ...updatedVisits[index], ...updatedVisit };
+  } else {
+    updatedVisits = [updatedVisit, ...current.visits].slice(0, 100);
+  }
+
+  if (updatedVisit.status && updatedVisit.status !== 'Menunggu' && !updatedReadIds.includes(updatedVisit.id)) {
+    updatedReadIds = [...updatedReadIds, updatedVisit.id];
+  }
+
+  const newStore: DailyNotificationStore = {
+    ...current,
+    visits: updatedVisits,
+    readVisitIds: updatedReadIds,
+  };
+  saveDailyNotificationStore(newStore);
+
+  const unreadCount = updatedVisits.filter((v) => !updatedReadIds.includes(v.id)).length;
+  return { visits: updatedVisits, readVisitIds: updatedReadIds, unreadCount };
+};
+
 // Mark a specific notification as opened/read
 export const markDailyNotificationAsRead = (visitOrId: Visit | string): { visits: Visit[]; readVisitIds: string[]; unreadCount: number } => {
   markPopupAsHandled(visitOrId);
