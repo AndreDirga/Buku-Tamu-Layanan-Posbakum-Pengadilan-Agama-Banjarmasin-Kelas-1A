@@ -13,9 +13,12 @@ import {
   Scale, 
   BarChart3, 
   PieChart as PieIcon,
-  RotateCcw
+  RotateCcw,
+  RefreshCw,
+  Check
 } from 'lucide-react';
 import { ResetStatsModal } from './ResetStatsModal';
+import { forceSyncWithServer } from '../../services/storageService';
 
 interface DashboardOverviewProps {
   visits: Visit[];
@@ -39,6 +42,23 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   officerName = 'Admin',
 }) => {
   const [showResetModal, setShowResetModal] = useState(false);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrateMessage, setCalibrateMessage] = useState<string | null>(null);
+
+  const handleCalibrateComputers = async () => {
+    setIsCalibrating(true);
+    setCalibrateMessage(null);
+    try {
+      const res = await forceSyncWithServer();
+      if (res.success) {
+        setCalibrateMessage(`Selaras: ${res.count} Data`);
+        if (onDataReset) onDataReset();
+        setTimeout(() => setCalibrateMessage(null), 4000);
+      }
+    } finally {
+      setIsCalibrating(false);
+    }
+  };
 
   // Intelligently determine active operational month & year across any client computer
   const opPeriod = useMemo(() => getOperationalPeriod(visits), [visits]);
@@ -169,6 +189,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
         {/* Action Shortcuts */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleCalibrateComputers}
+            disabled={isCalibrating}
+            className="px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 text-xs font-bold rounded-xl border border-emerald-700/80 flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
+            title="Selaraskan data kunjungan di semua komputer (Server Baseline: 131)"
+          >
+            {calibrateMessage ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isCalibrating ? 'animate-spin' : ''}`} />
+            )}
+            <span>{calibrateMessage || 'Sinkron 3 Komputer'}</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowResetModal(true)}

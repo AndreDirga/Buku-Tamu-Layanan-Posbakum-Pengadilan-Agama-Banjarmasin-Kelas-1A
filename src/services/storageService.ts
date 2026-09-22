@@ -639,10 +639,11 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
     // Check if matching by exact id
     let existingKey = map.has(v.id) ? v.id : null;
 
-    // If not matched by id, check if matched by visitNumber
-    if (!existingKey && v.visitNumber) {
+    // If not matched by id, check if matched by visitNumber AND same visitor name
+    if (!existingKey && v.visitNumber && v.name) {
+      const vNameNorm = v.name.trim().toLowerCase();
       for (const [k, sec] of map.entries()) {
-        if (sec.visitNumber === v.visitNumber) {
+        if (sec.visitNumber === v.visitNumber && sec.name && sec.name.trim().toLowerCase() === vNameNorm) {
           existingKey = k;
           break;
         }
@@ -695,16 +696,17 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
 };
 
 // Reconciles local browser caches (localStorage & IndexedDB) against central authoritative database.
-// Solves cross-computer discrepancy permanently: stale orphaned records from previous sessions
-// are pruned, while genuine new offline visits and full-resolution user photos/signatures are preserved.
+// The authoritative list is the single source of truth (131 verified records).
+// Stale orphaned records or old test entries on different computers are strictly pruned,
+// while genuine unsaved offline drafts created today and full-resolution user photos/signatures are preserved.
 export const reconcileWithAuthoritativeList = (authoritativeVisits: Visit[], localOrIdbVisits: Visit[]): Visit[] => {
   const deleted = getDeletedIds();
   const map = new Map<string, Visit>();
 
-  // 1. Authoritative visits (from Server API / Firestore / Seed) form the ground truth
+  // 1. Authoritative visits (from Server API / Firestore / Seed) form the absolute ground truth
   authoritativeVisits.forEach((v) => {
     if (v && v.id && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))) {
-      map.set(v.id, v);
+      map.set(v.id, { ...v });
     }
   });
 
@@ -758,16 +760,17 @@ export const reconcileWithAuthoritativeList = (authoritativeVisits: Visit[], loc
         signatureUrl: getBestImageDataUrl(auth.signatureUrl, loc.signatureUrl),
       });
     } else {
-      // Not in authoritative list: check if this is a genuine visit entered recently on this machine
+      // Not in authoritative list: only keep if it is an unsaved pending draft created on this machine within 2 hours
       const createdTime = new Date(loc.createdAt || loc.visitedAt || 0).getTime();
-      const isRecent = createdTime > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const isTodayDraft = loc.status === 'Menunggu' && (Date.now() - createdTime) < 2 * 60 * 60 * 1000;
       const hasValidName = Boolean(loc.name && loc.name.trim().length >= 2);
       const isNotObsolete = !KNOWN_OBSOLETE_IDS.has(loc.id) && (!loc.visitNumber || !KNOWN_OBSOLETE_IDS.has(loc.visitNumber));
 
-      if (isRecent && hasValidName && isNotObsolete) {
-        // Genuine new offline visit awaiting sync
+      if (isTodayDraft && hasValidName && isNotObsolete) {
+        // Genuine new offline draft awaiting sync
         map.set(loc.id, loc);
       }
+      // Any other stale record, old test entry, or ghost item is PRUNED completely!
     }
   });
 
@@ -909,11 +912,8 @@ export const fetchVisits = async (): Promise<Visit[]> => {
 
   if (fullyMerged.length > 0) {
     safeSaveVisitsToStorage(fullyMerged);
-
-    // If local caches had stale items that got pruned, ensure IndexedDB is also updated cleanly
-    if (idbVisits.length > fullyMerged.length) {
-      saveVisitsToIndexedDB(fullyMerged).catch(() => {});
-    }
+    // Ensure IndexedDB is always in exact sync with authoritative visits (pruning old test records)
+    saveVisitsToIndexedDB(fullyMerged).catch(() => {});
 
     // Cross-sync: If local cache or Firestore had visits/images that Server lacked or had as SVG
     const serverMap = new Map(serverVisits.map((v) => [v.id, v]));
@@ -1000,11 +1000,35 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
       }
     } else if (type === 'NEW_VISIT' && data) {
       if (!isVisitDeleted(data.id) && (!data.visitNumber || !isVisitDeleted(data.visitNumber))) {
-        handleFreshVisits([normalizeVisitData(data, data.id || 'hub-new')]);
+        const norm = normalizeVisitData(data, data.id || 'hub-new');
+        const existingIdx = currentVisits.findIndex(
+          (v) => v.id === norm.id || (norm.visitNumber && v.visitNumber === norm.visitNumber && norm.name && v.name && v.name.trim().toLowerCase() === norm.name.trim().toLowerCase())
+        );
+        let updatedList: Visit[];
+        if (existingIdx >= 0) {
+          updatedList = [...currentVisits];
+          updatedList[existingIdx] = { ...updatedList[existingIdx], ...norm };
+        } else {
+          updatedList = [norm, ...currentVisits];
+        }
+        updatedList.sort((a, b) => {
+          const timeA = new Date(a.visitedAt || a.createdAt || 0).getTime();
+          const timeB = new Date(b.visitedAt || b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
+        currentVisits = updatedList;
+        safeSaveVisitsToStorage(updatedList);
+        saveVisitsToIndexedDB(updatedList).catch(() => {});
+        callback(updatedList);
       }
     } else if (type === 'UPDATE_VISIT' && data) {
       if (!isVisitDeleted(data.id) && (!data.visitNumber || !isVisitDeleted(data.visitNumber))) {
-        handleFreshVisits([normalizeVisitData(data, data.id || 'hub-update')]);
+        const norm = normalizeVisitData(data, data.id || 'hub-update');
+        const updatedList = currentVisits.map((v) => (v.id === norm.id ? { ...v, ...norm } : v));
+        currentVisits = updatedList;
+        safeSaveVisitsToStorage(updatedList);
+        saveVisitsToIndexedDB(updatedList).catch(() => {});
+        callback(updatedList);
       }
     } else if (type === 'SYNC_VISITS' || type === 'RESET_VISITS') {
       syncFromServer();

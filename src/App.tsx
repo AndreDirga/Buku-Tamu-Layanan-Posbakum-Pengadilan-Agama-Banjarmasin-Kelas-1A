@@ -3,7 +3,9 @@ import { Visit, OfficerUser } from './types/posbakum';
 import { 
   getStoredVisits, 
   getVisitsFromIndexedDB,
+  reconcileWithAuthoritativeList,
   fetchVisits,
+  forceSyncWithServer,
   subscribeToVisits,
   getAuthenticatedOfficer, 
   setAuthenticatedOfficer,
@@ -61,11 +63,12 @@ export default function App() {
     const loadedVisits = getStoredVisits();
     setVisits(loadedVisits);
 
-    // 2. Hydrate full-resolution offline images from IndexedDB if present
+    // 2. Hydrate full-resolution offline images from IndexedDB without inflating visit count
     getVisitsFromIndexedDB()
       .then((idbVisits) => {
-        if (idbVisits && idbVisits.length >= loadedVisits.length) {
-          setVisits(idbVisits);
+        if (idbVisits && idbVisits.length > 0) {
+          const enriched = reconcileWithAuthoritativeList(loadedVisits, idbVisits);
+          setVisits(enriched);
         }
       })
       .catch(() => {});
@@ -128,10 +131,11 @@ export default function App() {
     };
   }, []);
 
-  // Full refresh helper
+  // Full refresh helper with authoritative server calibration
   const refreshVisits = async () => {
     setIsSyncing(true);
     try {
+      await forceSyncWithServer().catch(() => {});
       const fresh = await fetchVisits();
       setVisits(fresh);
     } finally {
