@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, CASE_CATEGORIES } from '../../types/posbakum';
-import { getStoredLogs, subscribeToLogs, clearAllVisits, logActivity } from '../../services/storageService';
+import { getStoredLogs, subscribeToLogs, clearAllVisits, logActivity, forceSyncWithServer } from '../../services/storageService';
 import { 
   Settings, 
   History, 
@@ -24,6 +24,8 @@ interface SettingsAndLogsProps {
 export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset }) => {
   const [logs, setLogs] = useState<ActivityLog[]>(() => getStoredLogs());
   const [resetDone, setResetDone] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'logs' | 'categories' | 'system'>('logs');
 
   useEffect(() => {
@@ -41,6 +43,33 @@ export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset })
       setResetDone(true);
       onDataReset();
       setTimeout(() => setResetDone(false), 3000);
+    }
+  };
+
+  const handleCalibrate = async () => {
+    setCalibrating(true);
+    setSyncMessage(null);
+    try {
+      const result = await forceSyncWithServer();
+      if (result.success) {
+        logActivity({
+          userId: 'officer-admin',
+          userName: 'Administrator',
+          userRole: 'Petugas Posbakum',
+          action: 'SINKRONISASI_DATA',
+          description: `Melakukan kalibrasi & sinkronisasi data antar-perangkat: ${result.count} data kunjungan.`,
+          badgeColor: 'emerald'
+        });
+        setSyncMessage(result.message);
+        onDataReset();
+      } else {
+        setSyncMessage(result.message || 'Gagal menyelaraskan data');
+      }
+    } catch (err: any) {
+      setSyncMessage(err?.message || 'Terjadi kesalahan saat kalibrasi');
+    } finally {
+      setCalibrating(false);
+      setTimeout(() => setSyncMessage(null), 6000);
     }
   };
 
@@ -220,6 +249,38 @@ export const SettingsAndLogs: React.FC<SettingsAndLogsProps> = ({ onDataReset })
       {/* Tab 3: System Info & Database Reset */}
       {activeTab === 'system' && (
         <div className="bg-white rounded-xl p-4 shadow-xs border border-slate-200 space-y-4">
+          {/* Card Kalibrasi & Sinkronisasi Antar-Komputer */}
+          <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-200 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
+                  <RefreshCcw className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Kalibrasi & Selaraskan Data Antar-Komputer</span>
+                </div>
+                <div className="text-[11px] text-slate-600 mt-0.5">
+                  Menyelaraskan data komputer ini dengan database server pusat, membersihkan cache usang atau duplikat lokal, dan memastikan jumlah total kunjungan sama persis di semua perangkat.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCalibrate}
+                disabled={calibrating}
+                className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0 shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              >
+                <RefreshCcw className={`w-3.5 h-3.5 ${calibrating ? 'animate-spin' : ''}`} />
+                <span>{calibrating ? 'Menyelaraskan...' : 'Sinkronkan Sekarang'}</span>
+              </button>
+            </div>
+
+            {syncMessage && (
+              <div className="p-2 bg-white rounded-lg border border-emerald-300 text-emerald-900 font-semibold text-[11px] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{syncMessage}</span>
+              </div>
+            )}
+          </div>
+
           <div className="space-y-1">
             <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5 text-rose-700" />

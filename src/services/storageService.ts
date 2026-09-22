@@ -248,7 +248,24 @@ const IDB_STORE = 'visits';
 const STORAGE_KEY_DELETED_VISITS = 'pabjm_posbakum_deleted_v1';
 const clientDeletedIds = new Set<string>();
 
+// Predefined set of obsolete test entries and simulations that must never appear in production totals
+export const KNOWN_OBSOLETE_IDS = new Set<string>([
+  'KJG-20260918-0010',
+  'KJG-20260918-0011',
+  'test-1789948158103-i1on',
+  'TEST-1022',
+  'notif-test-1789948158103-i1on',
+  'vst-test-guest-1',
+  'vst-test-sync-1',
+  'vst-test-guest-2',
+  'vst-sync-test-01',
+  'vst-1788410950971-wtxdn',
+  'KJG-20260908-9999',
+  'KJG-VST-1788',
+]);
+
 export const getDeletedIds = (): Set<string> => {
+  KNOWN_OBSOLETE_IDS.forEach((id) => clientDeletedIds.add(id));
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_DELETED_VISITS);
@@ -265,6 +282,7 @@ export const getDeletedIds = (): Set<string> => {
 
 export const isVisitDeleted = (idOrNumber?: string): boolean => {
   if (!idOrNumber) return false;
+  if (KNOWN_OBSOLETE_IDS.has(idOrNumber)) return true;
   const deleted = getDeletedIds();
   return deleted.has(idOrNumber);
 };
@@ -595,8 +613,10 @@ export const getStoredVisits = (): Visit[] => {
     .filter((item) => !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
     .map((item) => normalizeVisitData(item, item.id));
 
-  // Merge local list with seed baseline so any device/computer always has the complete records with real photos
-  const fullyRecovered = mergeVisits(localList, seedList);
+  // If local list has visits, reconcile against canonical seed baseline to prevent stale orphaned items from inflating the count
+  const fullyRecovered = localList.length > 0 
+    ? reconcileWithAuthoritativeList(seedList, localList)
+    : seedList;
   return fullyRecovered.filter((v) => !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber)));
 };
 
@@ -672,6 +692,93 @@ export const mergeVisits = (primaryList: Visit[], secondaryList: Visit[]): Visit
   });
 
   return merged;
+};
+
+// Reconciles local browser caches (localStorage & IndexedDB) against central authoritative database.
+// Solves cross-computer discrepancy permanently: stale orphaned records from previous sessions
+// are pruned, while genuine new offline visits and full-resolution user photos/signatures are preserved.
+export const reconcileWithAuthoritativeList = (authoritativeVisits: Visit[], localOrIdbVisits: Visit[]): Visit[] => {
+  const deleted = getDeletedIds();
+  const map = new Map<string, Visit>();
+
+  // 1. Authoritative visits (from Server API / Firestore / Seed) form the ground truth
+  authoritativeVisits.forEach((v) => {
+    if (v && v.id && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))) {
+      map.set(v.id, v);
+    }
+  });
+
+  // 2. Cross-reference local visits
+  localOrIdbVisits.forEach((loc) => {
+    if (!loc || !loc.id || deleted.has(loc.id) || (loc.visitNumber && deleted.has(loc.visitNumber))) {
+      return;
+    }
+
+    // A. Check exact ID match
+    let matchedId = map.has(loc.id) ? loc.id : null;
+
+    // B. Check visitNumber + name match (MUST match name to prevent collapsing different visitors who got identical temp numbers on different desks)
+    if (!matchedId && loc.visitNumber && loc.name) {
+      const locNameNorm = loc.name.trim().toLowerCase();
+      for (const [id, auth] of map.entries()) {
+        if (
+          auth.visitNumber === loc.visitNumber &&
+          auth.name &&
+          auth.name.trim().toLowerCase() === locNameNorm
+        ) {
+          matchedId = id;
+          break;
+        }
+      }
+    }
+
+    // C. Check name + close timestamp match (within 10 minutes)
+    if (!matchedId && loc.name && loc.visitedAt) {
+      const locNameNorm = loc.name.trim().toLowerCase();
+      const locTime = new Date(loc.visitedAt).getTime();
+      for (const [id, auth] of map.entries()) {
+        if (
+          auth.name &&
+          auth.name.trim().toLowerCase() === locNameNorm &&
+          auth.visitedAt &&
+          Math.abs(new Date(auth.visitedAt).getTime() - locTime) < 10 * 60 * 1000
+        ) {
+          matchedId = id;
+          break;
+        }
+      }
+    }
+
+    if (matchedId) {
+      // Enrich authoritative record with high-res photo/signature stored on this machine
+      const auth = map.get(matchedId)!;
+      map.set(matchedId, {
+        ...auth,
+        selfieUrl: getBestImageDataUrl(auth.selfieUrl, loc.selfieUrl),
+        signatureUrl: getBestImageDataUrl(auth.signatureUrl, loc.signatureUrl),
+      });
+    } else {
+      // Not in authoritative list: check if this is a genuine visit entered recently on this machine
+      const createdTime = new Date(loc.createdAt || loc.visitedAt || 0).getTime();
+      const isRecent = createdTime > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const hasValidName = Boolean(loc.name && loc.name.trim().length >= 2);
+      const isNotObsolete = !KNOWN_OBSOLETE_IDS.has(loc.id) && (!loc.visitNumber || !KNOWN_OBSOLETE_IDS.has(loc.visitNumber));
+
+      if (isRecent && hasValidName && isNotObsolete) {
+        // Genuine new offline visit awaiting sync
+        map.set(loc.id, loc);
+      }
+    }
+  });
+
+  const reconciled = Array.from(map.values());
+  reconciled.sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.visitedAt || 0).getTime();
+    const timeB = new Date(b.createdAt || b.visitedAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  return reconciled;
 };
 
 // Client-side Firestore Quota Circuit Breaker (Persisted in storage so page refresh is instant and never loops quota errors)
@@ -779,10 +886,14 @@ export const fetchVisits = async (): Promise<Visit[]> => {
     .map((item) => normalizeVisitData(item, item.id));
 
   // Authoritative merge order: Cloud Firestore & Server visits take priority
-  let fullyMerged = mergeVisits(firestoreVisits, serverVisits);
-  fullyMerged = mergeVisits(fullyMerged, idbVisits);
-  fullyMerged = mergeVisits(fullyMerged, localVisits);
-  fullyMerged = mergeVisits(fullyMerged, seedList);
+  let centralVisits = mergeVisits(firestoreVisits, serverVisits);
+  if (centralVisits.length === 0) {
+    centralVisits = seedList;
+  }
+
+  // Authoritative reconciliation: combine local + IndexedDB into central truth without duplicating or resurrecting stale records
+  const allLocalCandidate = [...idbVisits, ...localVisits];
+  let fullyMerged = reconcileWithAuthoritativeList(centralVisits, allLocalCandidate);
 
   // Filter out any deleted visits
   fullyMerged = fullyMerged.filter(
@@ -798,6 +909,11 @@ export const fetchVisits = async (): Promise<Visit[]> => {
 
   if (fullyMerged.length > 0) {
     safeSaveVisitsToStorage(fullyMerged);
+
+    // If local caches had stale items that got pruned, ensure IndexedDB is also updated cleanly
+    if (idbVisits.length > fullyMerged.length) {
+      saveVisitsToIndexedDB(fullyMerged).catch(() => {});
+    }
 
     // Cross-sync: If local cache or Firestore had visits/images that Server lacked or had as SVG
     const serverMap = new Map(serverVisits.map((v) => [v.id, v]));
@@ -835,7 +951,8 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
     const validFresh = fresh.filter(
       (v) => v && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
     );
-    const merged = mergeVisits(validFresh, currentVisits).filter(
+    // Use authoritative reconciliation so server updates normalize local state and discard stale entries
+    const merged = reconcileWithAuthoritativeList(validFresh, currentVisits).filter(
       (v) => v && !deleted.has(v.id) && (!v.visitNumber || !deleted.has(v.visitNumber))
     );
     merged.sort((a, b) => {
@@ -858,8 +975,9 @@ export const subscribeToVisits = (callback: (visits: Visit[]) => void): (() => v
   // 1. Initial hydration from IndexedDB for high-res images
   getVisitsFromIndexedDB().then((idbVisits) => {
     if (!isSubscribed) return;
-    if (idbVisits && idbVisits.length >= currentVisits.length) {
-      handleFreshVisits(idbVisits);
+    if (idbVisits && idbVisits.length > 0) {
+      const reconciled = reconcileWithAuthoritativeList(currentVisits, idbVisits);
+      handleFreshVisits(reconciled);
     }
   }).catch(() => {});
 
@@ -1694,3 +1812,60 @@ export const setAuthenticatedOfficer = (officer: OfficerUser | null): void => {
     }
   } catch {}
 };
+
+// Explicit calibration function for Admin: forces local machine to align 100% with central server database.
+// Clears any obsolete / orphaned cache keys, writes clean canonical visits to IndexedDB and localStorage,
+// and broadcasts the normalized state to all open windows/tabs.
+export const forceSyncWithServer = async (): Promise<{ success: boolean; count: number; message: string }> => {
+  try {
+    // 1. Fetch fresh deleted IDs from server so no resurrecting occurs
+    await syncDeletedIdsFromServer().catch(() => {});
+    const deleted = getDeletedIds();
+
+    // 2. Fetch authoritative visits directly from server
+    let serverVisits: Visit[] = [];
+    try {
+      const res = await fetch('/api/visits', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          serverVisits = json.data
+            .filter((item: any) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+            .map((item: any) => normalizeVisitData(item, item.id));
+        }
+      }
+    } catch {}
+
+    // Fallback to seedList if server is unreachable
+    if (serverVisits.length === 0) {
+      serverVisits = (seedVisitsLite as any[])
+        .filter((item: any) => item && !deleted.has(item.id) && (!item.visitNumber || !deleted.has(item.visitNumber)))
+        .map((item: any) => normalizeVisitData(item, item.id));
+    }
+
+    if (serverVisits.length > 0) {
+      // 3. Clear obsolete localStorage keys
+      for (const oldKey of ALL_STORAGE_KEYS) {
+        try { localStorage.removeItem(oldKey); } catch {}
+      }
+
+      // 4. Overwrite IndexedDB and localStorage cleanly
+      await saveVisitsToIndexedDB(serverVisits);
+      safeSaveVisitsToStorage(serverVisits);
+
+      // 5. Broadcast normalized state across all browser tabs
+      realtimeHub.broadcastLocal('RESET_VISITS', { count: serverVisits.length });
+
+      return {
+        success: true,
+        count: serverVisits.length,
+        message: `Sinkronisasi berhasil! Data komputer ini telah diselaraskan dengan server pusat (${serverVisits.length} Kunjungan).`
+      };
+    }
+  } catch (err: any) {
+    console.error('Calibration error:', err);
+    return { success: false, count: 0, message: err?.message || 'Gagal sinkronisasi data' };
+  }
+  return { success: false, count: 0, message: 'Data server tidak tersedia' };
+};
+

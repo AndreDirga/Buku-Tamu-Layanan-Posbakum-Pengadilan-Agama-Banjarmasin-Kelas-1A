@@ -51,11 +51,11 @@ function saveDeletedIdsToDisk(): void {
 // Initialize deleted IDs from disk immediately
 deletedIdsCache = readDeletedIdsFromDisk();
 
-// Default initial visits for Posbakum Pengadilan Agama Banjarmasin
+// Default initial visits for Posbakum Pengadilan Agama Banjarmasin (canonical numbers)
 const DEFAULT_VISITS = [
   {
     id: 'vst-20260907-001',
-    visitNumber: 'KJG-20260907-0001',
+    visitNumber: 'KJG-20260907-0019',
     name: 'Siti Rahmah, S.Pd',
     ktpAddress: 'Jl. Sutoyo S No. 42, RT 12 RW 02, Kel. Teluk Dalam, Kec. Banjarmasin Tengah',
     domicileAddress: 'Jl. Sutoyo S No. 42, RT 12 RW 02, Kel. Teluk Dalam, Kec. Banjarmasin Tengah',
@@ -66,9 +66,9 @@ const DEFAULT_VISITS = [
     caseCategory: 'Hukum Keluarga & Perkawinan',
     caseType: 'Gugatan Perceraian (Cerai Gugat)',
     selfieUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23047857"/><circle cx="100" cy="80" r="35" fill="%23ecfdf5"/><path d="M45 165 C45 125 155 125 155 165 Z" fill="%23ecfdf5"/><text x="100" y="190" font-family="sans-serif" font-size="12" fill="%23ffffff" text-anchor="middle">Foto KTP / Pengunjung</text></svg>',
-    selfieFileName: 'KJG-20260907-0001-selfie.jpg',
+    selfieFileName: 'KJG-20260907-0019-selfie.jpg',
     signatureUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M30 90 Q 70 30, 110 80 T 170 85 T 230 75 Q 260 90, 270 60" stroke="%23047857" stroke-width="3" fill="none"/></svg>',
-    signatureFileName: 'KJG-20260907-0001-signature.png',
+    signatureFileName: 'KJG-20260907-0019-signature.png',
     qrToken: 'POSBAKUM-MEJA-1',
     status: 'Diproses',
     visitedAt: '2026-09-07T08:45:00.000Z',
@@ -80,7 +80,7 @@ const DEFAULT_VISITS = [
   },
   {
     id: 'vst-20260907-002',
-    visitNumber: 'KJG-20260907-0002',
+    visitNumber: 'KJG-20260907-0020',
     name: 'Muhammad Fahmi, S.E',
     ktpAddress: 'Jl. Veteran Gg. Dwikora No. 15, RT 08, Kec. Banjarmasin Timur',
     domicileAddress: 'Jl. Veteran Gg. Dwikora No. 15, RT 08, Kec. Banjarmasin Timur',
@@ -91,9 +91,9 @@ const DEFAULT_VISITS = [
     caseCategory: 'Hukum Keluarga & Perkawinan',
     caseType: 'Permohonan Isbat Nikah (Pengesahan Nikah)',
     selfieUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23065f46"/><circle cx="100" cy="80" r="35" fill="%23ecfdf5"/><path d="M45 165 C45 125 155 125 155 165 Z" fill="%23ecfdf5"/><text x="100" y="190" font-family="sans-serif" font-size="12" fill="%23ffffff" text-anchor="middle">Foto KTP / Pengunjung</text></svg>',
-    selfieFileName: 'KJG-20260907-0002-selfie.jpg',
+    selfieFileName: 'KJG-20260907-0020-selfie.jpg',
     signatureUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M40 85 Q 90 40, 130 90 T 190 70 T 260 80" stroke="%23065f46" stroke-width="3" fill="none"/></svg>',
-    signatureFileName: 'KJG-20260907-0002-signature.png',
+    signatureFileName: 'KJG-20260907-0020-signature.png',
     qrToken: 'POSBAKUM-MEJA-1',
     status: 'Menunggu',
     visitedAt: '2026-09-07T09:30:00.000Z',
@@ -130,7 +130,7 @@ const DEFAULT_VISITS = [
   },
   {
     id: 'vst-20260904-001',
-    visitNumber: 'KJG-20260904-0001',
+    visitNumber: 'KJG-20260904-0011',
     name: 'Akhmad Zulkifli',
     ktpAddress: 'Jl. Belitung Darat No. 88, RT 05, Kel. Kuin Selatan, Banjarmasin Barat',
     domicileAddress: 'Jl. Belitung Darat No. 88, RT 05, Kel. Kuin Selatan, Banjarmasin Barat',
@@ -141,9 +141,9 @@ const DEFAULT_VISITS = [
     caseCategory: 'Hukum Waris & Harta Bersama',
     caseType: 'Konsultasi Hukum Waris & Harta Bersama',
     selfieUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23065f46"/><circle cx="100" cy="80" r="35" fill="%23ecfdf5"/><path d="M45 165 C45 125 155 125 155 165 Z" fill="%23ecfdf5"/><text x="100" y="190" font-family="sans-serif" font-size="12" fill="%23ffffff" text-anchor="middle">Foto KTP / Pengunjung</text></svg>',
-    selfieFileName: 'KJG-20260904-0001-selfie.jpg',
+    selfieFileName: 'KJG-20260904-0011-selfie.jpg',
     signatureUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M40 90 Q 80 40, 140 85 T 200 80 T 260 70" stroke="%23065f46" stroke-width="3" fill="none"/></svg>',
-    signatureFileName: 'KJG-20260904-0001-signature.png',
+    signatureFileName: 'KJG-20260904-0011-signature.png',
     qrToken: 'POSBAKUM-MEJA-1',
     status: 'Selesai',
     visitedAt: '2026-09-04T11:20:00.000Z',
@@ -155,7 +155,7 @@ const DEFAULT_VISITS = [
   },
   {
     id: 'vst-20260902-001',
-    visitNumber: 'KJG-20260902-0001',
+    visitNumber: 'KJG-20260902-0011',
     name: 'Nurul Hidayah',
     ktpAddress: 'Jl. Pangeran Hidayatullah, Banua Anyar RT 11, Banjarmasin Timur',
     domicileAddress: 'Jl. Pangeran Hidayatullah, Banua Anyar RT 11, Banjarmasin Timur',
@@ -166,9 +166,9 @@ const DEFAULT_VISITS = [
     caseCategory: 'Hukum Keluarga & Perkawinan',
     caseType: 'Gugatan Perceraian (Cerai Gugat)',
     selfieUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23047857"/><circle cx="100" cy="80" r="35" fill="%23ecfdf5"/><path d="M45 165 C45 125 155 125 155 165 Z" fill="%23ecfdf5"/><text x="100" y="190" font-family="sans-serif" font-size="12" fill="%23ffffff" text-anchor="middle">Foto KTP / Pengunjung</text></svg>',
-    selfieFileName: 'KJG-20260902-0001-selfie.jpg',
+    selfieFileName: 'KJG-20260902-0011-selfie.jpg',
     signatureUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M30 85 Q 75 35, 125 80 T 185 85 T 260 75" stroke="%23047857" stroke-width="3" fill="none"/></svg>',
-    signatureFileName: 'KJG-20260902-0001-signature.png',
+    signatureFileName: 'KJG-20260902-0011-signature.png',
     qrToken: 'POSBAKUM-MEJA-1',
     status: 'Selesai',
     visitedAt: '2026-09-02T09:10:00.000Z',
@@ -180,7 +180,7 @@ const DEFAULT_VISITS = [
   },
   {
     id: 'vst-20260901-001',
-    visitNumber: 'KJG-20260901-0001',
+    visitNumber: 'KJG-20260901-0014',
     name: 'H. Gusti Arifin',
     ktpAddress: 'Jl. Sultan Adam Komplek Taekwondo Permai No. 23, Banjarmasin Utara',
     domicileAddress: 'Jl. Sultan Adam Komplek Taekwondo Permai No. 23, Banjarmasin Utara',
@@ -191,9 +191,9 @@ const DEFAULT_VISITS = [
     caseCategory: 'Hukum Waris & Harta Bersama',
     caseType: 'Permohonan Penetapan Ahli Waris',
     selfieUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23065f46"/><circle cx="100" cy="80" r="35" fill="%23ecfdf5"/><path d="M45 165 C45 125 155 125 155 165 Z" fill="%23ecfdf5"/><text x="100" y="190" font-family="sans-serif" font-size="12" fill="%23ffffff" text-anchor="middle">Foto KTP / Pengunjung</text></svg>',
-    selfieFileName: 'KJG-20260901-0001-selfie.jpg',
+    selfieFileName: 'KJG-20260901-0014-selfie.jpg',
     signatureUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150"><path d="M40 80 Q 90 30, 140 80 T 210 75 T 270 70" stroke="%23065f46" stroke-width="3" fill="none"/></svg>',
-    signatureFileName: 'KJG-20260901-0001-signature.png',
+    signatureFileName: 'KJG-20260901-0014-signature.png',
     qrToken: 'DIRECT-WEB',
     status: 'Selesai',
     visitedAt: '2026-09-01T10:00:00.000Z',
@@ -234,11 +234,11 @@ function readVisitsFromDisk(): any[] {
       seedData = seedData.filter((v) => v && v.id && !deletedIdsCache.has(v.id) && (!v.visitNumber || !deletedIdsCache.has(v.visitNumber)));
     }
 
-    if (Array.isArray(data) && data.length >= 125) {
+    if (Array.isArray(data) && data.length >= 131) {
       return data;
     }
 
-    // If disk has fewer than 125 records, merge with seed data so baseline visits are guaranteed (excluding deleted items)
+    // If disk has fewer than 131 records, merge with seed data so baseline visits are guaranteed (excluding deleted items)
     if (Array.isArray(seedData) && seedData.length > 0) {
       const map = new Map<string, any>();
       seedData.forEach((v) => {

@@ -32,5 +32,11 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // Deleted visits tombstones to synchronize deletions across all computers
+    match /deleted_visits/{deletedId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }
